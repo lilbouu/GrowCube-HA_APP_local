@@ -2415,7 +2415,7 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        LOGGER.info(
+        LOGGER.debug(
             "Ingress API request remote=%s path=%s query=%r",
             self.client_address[0],
             parsed.path,
@@ -2507,7 +2507,7 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        LOGGER.info(
+        LOGGER.debug(
             "Ingress API POST request remote=%s path=%s query=%r",
             self.client_address[0],
             parsed.path,
@@ -2566,7 +2566,7 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
 
     def _write_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        LOGGER.info(
+        LOGGER.debug(
             "Ingress API response remote=%s path=%s status=%s bytes=%s",
             self.client_address[0],
             urlparse(self.path).path,
@@ -2583,7 +2583,7 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
 
     def _write_html(self, html: str, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = html.encode("utf-8")
-        LOGGER.info(
+        LOGGER.debug(
             "Ingress UI response remote=%s path=%s status=%s bytes=%s",
             self.client_address[0],
             urlparse(self.path).path,
@@ -2602,7 +2602,7 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
         self._write_bytes(text.encode("utf-8"), content_type, status)
 
     def _write_bytes(self, body: bytes, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:
-        LOGGER.info(
+        LOGGER.debug(
             "Ingress static response remote=%s path=%s status=%s bytes=%s",
             self.client_address[0],
             urlparse(self.path).path,

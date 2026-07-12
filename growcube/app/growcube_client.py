@@ -230,7 +230,8 @@ class GrowCubeClient:
         if self._writer is None or self._writer.is_closing():
             return
         data = command.to_bytes() if isinstance(command, Command) else command
-        LOGGER.info("GrowCube TX %s:%s %s", self.host, self.port, data.decode("ascii", errors="replace"))
+        text = data.decode("ascii", errors="replace")
+        log_outgoing_command(self.host, self.port, command, text)
         self._writer.write(data)
         await self._writer.drain()
 
@@ -417,6 +418,45 @@ def report_from_message(command: int, payload: str, raw: str) -> Report:
     except (TypeError, ValueError):
         pass
     return Report(command, raw)
+
+
+def log_outgoing_command(host: str, port: int, command: Command | bytes, text: str) -> None:
+    if not isinstance(command, Command):
+        LOGGER.debug("GrowCube TX %s:%s %s", host, port, text)
+        return
+    parts = command.payload.split("@") if command.payload else []
+    if command.command == 49 and len(parts) >= 4:
+        plant_id = parts[4] if len(parts) >= 5 else ""
+        LOGGER.info(
+            "GrowCube TX watering-mode host=%s:%s channel=%s mode=%s first=%s second=%s plant_id=%s raw=%s",
+            host,
+            port,
+            parts[0],
+            parts[1],
+            parts[2],
+            parts[3],
+            plant_id,
+            text,
+        )
+        return
+    if command.command == 51 and len(parts) >= 4:
+        plant_id = parts[4] if len(parts) >= 5 else ""
+        LOGGER.info(
+            "GrowCube TX scheduled-watering host=%s:%s channel=%s duration_s=%s interval_h=%s epoch=%s plant_id=%s raw=%s",
+            host,
+            port,
+            parts[0],
+            parts[1],
+            parts[2],
+            parts[3],
+            plant_id,
+            text,
+        )
+        return
+    if command.command == 55:
+        LOGGER.info("GrowCube TX watering-state-request host=%s:%s payload=%r raw=%s", host, port, command.payload, text)
+        return
+    LOGGER.debug("GrowCube TX %s:%s %s", host, port, text)
 
 
 async def _maybe_call(callback, *args) -> None:

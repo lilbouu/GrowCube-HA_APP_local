@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.79-plant-restore";
+const GROWCUBE_CARD_VERSION = "0.2.80-plant-restore";
 const GROWCUBE_DATE_LOCALE = "en-US";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
