@@ -152,6 +152,8 @@ class DelayedTimedWateringStateReport(Report):
     next_start_epoch: int
     smart_min_moisture: int = 0
     smart_max_moisture: int = 0
+    plant_id: int = 0
+    has_plant_id: bool = False
 
 
 ReportCallback = Callable[[Report], Awaitable[None] | None]
@@ -203,7 +205,7 @@ class GrowCubeClient:
         await self.send(Command(44, time_sync_payload(datetime.now())))
         await self.send(Command(52, ""))
         await self.send(Command(54, ""))
-        await self.send(Command(55, "v2"))
+        await self.send(Command(55, "v3"))
         return True, ""
 
     async def disconnect(self) -> None:
@@ -384,7 +386,7 @@ def report_from_message(command: int, payload: str, raw: str) -> Report:
                 )
         if command == 55:
             parts = _split_ints(payload)
-            if len(parts) == 6 and parts[0] == 2:
+            if len(parts) >= 6 and parts[0] in (2, 3):
                 mode = parts[2]
                 if mode in (0, 1, 2, 3):
                     return DelayedTimedWateringStateReport(
@@ -398,6 +400,8 @@ def report_from_message(command: int, payload: str, raw: str) -> Report:
                         next_start_epoch=max(0, parts[5]) if mode == 1 else 0,
                         smart_min_moisture=max(0, parts[3]) if mode in (2, 3) else 0,
                         smart_max_moisture=max(0, parts[4]) if mode in (2, 3) else 0,
+                        plant_id=max(0, parts[6]) if parts[0] == 3 and len(parts) > 6 else 0,
+                        has_plant_id=parts[0] == 3 and len(parts) > 6,
                     )
             if len(parts) == 5:
                 return DelayedTimedWateringStateReport(

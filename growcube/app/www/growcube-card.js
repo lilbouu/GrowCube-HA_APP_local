@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.78-addon-compat";
+const GROWCUBE_CARD_VERSION = "0.2.79-plant-restore";
 const GROWCUBE_DATE_LOCALE = "en-US";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
@@ -146,8 +146,10 @@ class GrowcubeCard extends HTMLElement {
       this._dashboardDevices = [record];
     }
     record.channels = record.channels || {};
+    const hasPlantId = Object.prototype.hasOwnProperty.call(values, "plant_id");
     record.channels[channel] = {
       ...(record.channels[channel] || {}),
+      plant_id: hasPlantId ? Number(values.plant_id) || 0 : record.channels[channel]?.plant_id || 0,
       plant_name: values.plant_name || record.channels[channel]?.plant_name || "",
       photo_url: this._plantImageUrl(values.photo_url || record.channels[channel]?.photo_url || ""),
       image_url: this._plantImageUrl(values.image_url || values.photo_url || record.channels[channel]?.image_url || record.channels[channel]?.photo_url || ""),
@@ -169,6 +171,7 @@ class GrowcubeCard extends HTMLElement {
       photo_url: "",
       photo_url_value: "",
       image_url: "",
+      plant_id: 0,
       configured: false,
     };
     this._forgetPlantPhotoUrl(record.device_id || deviceId, channel);
@@ -531,6 +534,7 @@ class GrowcubeCard extends HTMLElement {
         const nextChannel = channels[channel] || {};
         const previousChannel = previous.channels?.[channel] || {};
         const hasConfigured = Object.prototype.hasOwnProperty.call(nextChannel, "configured");
+        const hasPlantId = Object.prototype.hasOwnProperty.call(nextChannel, "plant_id");
         const configured = hasConfigured ? Boolean(nextChannel.configured) : previousChannel.configured;
         if (hasConfigured && !configured) {
           channels[channel] = {
@@ -539,6 +543,7 @@ class GrowcubeCard extends HTMLElement {
             photo_url: "",
             photo_url_value: "",
             image_url: "",
+            plant_id: 0,
             photo_url_entity: nextChannel.photo_url_entity || previousChannel.photo_url_entity || "",
             configured: false,
           };
@@ -547,6 +552,7 @@ class GrowcubeCard extends HTMLElement {
         }
         channels[channel] = {
           ...nextChannel,
+          plant_id: hasPlantId ? Number(nextChannel.plant_id) || 0 : Number(previousChannel.plant_id) || 0,
           plant_name: nextChannel.plant_name || previousChannel.plant_name || "",
           photo_url: nextChannel.photo_url_value || nextChannel.photo_url || previousChannel.photo_url_value || previousChannel.photo_url || "",
           photo_url_value: nextChannel.photo_url_value || previousChannel.photo_url_value || "",
@@ -1735,6 +1741,7 @@ class GrowcubeCard extends HTMLElement {
     const photoUrl = this._plantImageUrl(this._plantWizardPhotoUrl || this._catalogImageUrl(profile));
     const values = {
       configured: true,
+      plant_id: this._plantWizardCustom ? 0 : Number(profile.id) || 0,
       plant_name: this._plantWizardName.trim(),
       photo_url: photoUrl,
       type_category: this._plantWizardCategory.trim(),
@@ -1768,8 +1775,10 @@ class GrowcubeCard extends HTMLElement {
         this._rememberCustomPlantProfileFromWizard();
         this._plantWizardOpen = false;
         this._customPlantsOpen = false;
+        const apiResultHasPlantId = Object.prototype.hasOwnProperty.call(apiResult, "plant_id");
         this._applyOptimisticChannelMetadata(channel, {
           ...values,
+          plant_id: apiResultHasPlantId ? Number(apiResult.plant_id) || 0 : values.plant_id,
           plant_name: apiResult.plant_name || values.plant_name,
           photo_url: apiResult.photo_url || values.photo_url,
           image_url: apiResult.image_url || apiResult.photo_url || values.photo_url,
@@ -2352,6 +2361,7 @@ class GrowcubeCard extends HTMLElement {
     const imageUrl = this._catalogImageUrl(item);
     return {
       ...item,
+      id: Number(item.id) || 0,
       display_name: item.display_name || item.name || "",
       image_url: imageUrl,
     };
