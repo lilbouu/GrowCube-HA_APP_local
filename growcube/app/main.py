@@ -653,6 +653,9 @@ class GrowCubeManager:
             )
             await self._reset_watering_mode(runtime, channel, config.plant_id)
             await runtime.client.send(
+                Command(49, watering_mode_payload(channel, 1, duration, interval, config.plant_id))
+            )
+            await runtime.client.send(
                 Command(51, scheduled_watering_payload(channel, duration, interval, start_time, config.plant_id))
             )
         elif mode == "Smart":
@@ -2521,6 +2524,20 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
             if parsed.path == "/plants/photo":
                 payload = self._read_json_body(2 * 1024 * 1024)
                 self._write_json(save_uploaded_plant_photo(payload))
+            elif parsed.path == "/channel/config":
+                payload = self._read_json_body(64 * 1024)
+                params = {
+                    key: ["1" if value is True else "0" if value is False else str(value)]
+                    for key, value in payload.items()
+                    if value is not None
+                }
+                self._write_json(
+                    manager.configure_channel_payload(
+                        first_query_value(params, "device_id"),
+                        first_query_value(params, "channel") or "a",
+                        params,
+                    )
+                )
             else:
                 self._write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
         except ValueError as err:

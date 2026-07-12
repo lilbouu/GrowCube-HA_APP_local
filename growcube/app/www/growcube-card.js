@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.80-plant-restore";
+const GROWCUBE_CARD_VERSION = "0.2.81-channel-config-post";
 const GROWCUBE_DATE_LOCALE = "en-US";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
@@ -257,7 +257,7 @@ class GrowcubeCard extends HTMLElement {
     return {};
   }
 
-  async _fetchAddonApi(path, retried = false) {
+  async _fetchAddonApi(path, retried = false, requestOptions = {}) {
     const baseUrl = await this._addonApiUrl();
     if (!baseUrl) {
       console.warn("[GrowCube] add-on API URL is unavailable", { path });
@@ -271,7 +271,9 @@ class GrowcubeCard extends HTMLElement {
       cache: "no-store",
       headers: {
         "Accept": "application/json",
+        ...(requestOptions.body ? { "Content-Type": "application/json" } : {}),
       },
+      ...requestOptions,
     });
     if (!response.ok) {
       const body = await response.text();
@@ -281,7 +283,7 @@ class GrowcubeCard extends HTMLElement {
         if (refreshedUrl && refreshedUrl !== baseUrl) {
           this._addonApiUrlCache = refreshedUrl;
           console.info("[GrowCube] retrying add-on API with refreshed ingress URL", { oldUrl: baseUrl, newUrl: refreshedUrl });
-          return this._fetchAddonApi(path, true);
+          return this._fetchAddonApi(path, true, requestOptions);
         }
       }
       throw new Error(`GrowCube add-on API failed: ${response.status} ${response.statusText}: ${body.slice(0, 240)}`);
@@ -1167,22 +1169,21 @@ class GrowcubeCard extends HTMLElement {
   }
 
   async _configureChannelApi(channel = this._channelKey(), values = {}, apply = true) {
-    const params = new URLSearchParams({ channel, apply: apply ? "1" : "0" });
+    const payload = { channel, apply };
     const deviceId = this._apiDeviceIdHint();
     if (deviceId) {
-      params.set("device_id", deviceId);
+      payload.device_id = deviceId;
     }
     Object.entries(values).forEach(([key, value]) => {
       if (value === undefined || value === null) {
         return;
       }
-      if (typeof value === "boolean") {
-        params.set(key, value ? "1" : "0");
-        return;
-      }
-      params.set(key, String(value));
+      payload[key] = value;
     });
-    return this._fetchAddonApi(`channel/config?${params.toString()}`);
+    return this._fetchAddonApi("channel/config", false, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   _entityDisplay(entityId, fallback = "Unknown") {
@@ -1763,7 +1764,7 @@ class GrowcubeCard extends HTMLElement {
       try {
         apiResult = await this._configureChannelApi(channel, values, mode === "Smart" || mode === "Repeating");
       } catch (error) {
-        console.warn("[GrowCube] add plant via add-on API failed; falling back to MQTT entities", {
+        console.warn("[GrowCube] add plant via add-on API failed", {
           channel,
           mode,
           error: error?.message || String(error),
@@ -1771,6 +1772,10 @@ class GrowcubeCard extends HTMLElement {
         apiResult = undefined;
       }
       if (apiResult) {
+        const returnedPlantId = Number(apiResult.plant_id) || 0;
+        if (values.plant_id > 0 && returnedPlantId !== values.plant_id) {
+          throw new Error(`GrowCube add-on returned plant ID ${returnedPlantId} instead of ${values.plant_id}.`);
+        }
         console.info("[GrowCube] add plant via add-on API succeeded", { channel, mode });
         this._rememberCustomPlantProfileFromWizard();
         this._plantWizardOpen = false;
@@ -1778,7 +1783,7 @@ class GrowcubeCard extends HTMLElement {
         const apiResultHasPlantId = Object.prototype.hasOwnProperty.call(apiResult, "plant_id");
         this._applyOptimisticChannelMetadata(channel, {
           ...values,
-          plant_id: apiResultHasPlantId ? Number(apiResult.plant_id) || 0 : values.plant_id,
+          plant_id: apiResultHasPlantId ? returnedPlantId : values.plant_id,
           plant_name: apiResult.plant_name || values.plant_name,
           photo_url: apiResult.photo_url || values.photo_url,
           image_url: apiResult.image_url || apiResult.photo_url || values.photo_url,
@@ -1790,6 +1795,9 @@ class GrowcubeCard extends HTMLElement {
         this._showToast("Plant added");
         this._render();
         return;
+      }
+      if (values.plant_id > 0) {
+        throw new Error("Could not save the catalog plant ID. Check the GrowCube add-on connection and try again.");
       }
       if (entities.name && this._plantWizardName.trim()) {
         await this._setText(entities.name, this._plantWizardName.trim());

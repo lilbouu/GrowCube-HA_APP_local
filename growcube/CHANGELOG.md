@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.81
+
+- Send complete plant profiles through `POST /channel/config` so long descriptions cannot exceed ingress URL limits.
+- Prevent catalog plants from falling back to a watering update with `plant_id=0` when the add-on API fails.
+- Verify that the saved catalog plant ID matches the selected plant before reporting success.
+
 ## 0.2.78
 
 - Format GrowCube card dates in English regardless of the browser or Home Assistant locale.
