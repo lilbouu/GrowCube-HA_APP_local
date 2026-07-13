@@ -1,5 +1,4 @@
 const GROWCUBE_CARD_VERSION = "0.2.81-channel-config-post";
-const GROWCUBE_DATE_LOCALE = "en-US";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
 class GrowcubeCard extends HTMLElement {
@@ -953,16 +952,41 @@ class GrowcubeCard extends HTMLElement {
     return points.map((point) => ({ ...point, x: xFor(point), y: yFor(point) }));
   }
 
+  _dateLocale() {
+    const haLanguage = this._hass?.locale?.language || this._hass?.language;
+    if (haLanguage) {
+      return haLanguage;
+    }
+    if (navigator.languages?.length) {
+      return navigator.languages;
+    }
+    return navigator.language || undefined;
+  }
+
+  _dateTimeOptions(options = {}) {
+    const result = { ...options };
+    if (!Object.prototype.hasOwnProperty.call(result, "hour") || Object.prototype.hasOwnProperty.call(result, "hour12")) {
+      return result;
+    }
+    const timeFormat = this._hass?.locale?.time_format;
+    if (timeFormat === "24") {
+      result.hour12 = false;
+    } else if (timeFormat === "12") {
+      result.hour12 = true;
+    }
+    return result;
+  }
+
   _formatChartHoverDate(timestamp) {
     if (!timestamp) {
       return "";
     }
-    return new Date(timestamp).toLocaleString(GROWCUBE_DATE_LOCALE, {
+    return new Date(timestamp).toLocaleString(this._dateLocale(), this._dateTimeOptions({
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    });
+    }));
   }
 
   _entityState(entityId, fallback = "Unknown") {
@@ -1210,14 +1234,14 @@ class GrowcubeCard extends HTMLElement {
     if (Number.isNaN(timestamp.getTime())) {
       return this._entityDisplay(entityId, fallback);
     }
-    const dateText = timestamp.toLocaleDateString(GROWCUBE_DATE_LOCALE, {
+    const dateText = timestamp.toLocaleDateString(this._dateLocale(), {
       day: "numeric",
       month: "long",
     });
-    const timeText = timestamp.toLocaleTimeString(GROWCUBE_DATE_LOCALE, {
+    const timeText = timestamp.toLocaleTimeString(this._dateLocale(), this._dateTimeOptions({
       hour: "2-digit",
       minute: "2-digit",
-    });
+    }));
     return `${dateText} ${timeText}`;
   }
 
@@ -4854,11 +4878,11 @@ class GrowcubeCard extends HTMLElement {
       return `<div class="chart-time${align === "end" ? " end" : ""}"></div>`;
     }
     const date = new Date(timestamp);
-    const timeText = date.toLocaleTimeString(GROWCUBE_DATE_LOCALE, {
+    const timeText = date.toLocaleTimeString(this._dateLocale(), this._dateTimeOptions({
       hour: "2-digit",
       minute: "2-digit",
-    });
-    const dateText = date.toLocaleDateString(GROWCUBE_DATE_LOCALE, {
+    }));
+    const dateText = date.toLocaleDateString(this._dateLocale(), {
       weekday: "short",
       month: "short",
       day: "numeric",
@@ -5093,12 +5117,12 @@ class GrowcubeCard extends HTMLElement {
     if (!timestamp) {
       return "";
     }
-    return new Date(timestamp).toLocaleString(GROWCUBE_DATE_LOCALE, {
+    return new Date(timestamp).toLocaleString(this._dateLocale(), this._dateTimeOptions({
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    });
+    }));
   }
 
   _overviewActivityItems() {
@@ -6118,32 +6142,9 @@ class GrowcubeCard extends HTMLElement {
   }
 
   async _confirmModeWizard() {
-    const entities = this._entities();
     try {
-      if (entities.mode) {
-        await this._setSelect(entities.mode, this._normalizeMode(this._modeWizardMode));
-      }
-      if (this._modeWizardMode === "Smart") {
-        if (entities.smart_min_moisture) {
-          await this._setNumber(entities.smart_min_moisture, this._modeWizardSmartMin);
-        }
-        if (entities.smart_max_moisture) {
-          await this._setNumber(entities.smart_max_moisture, this._modeWizardSmartMax);
-        }
-        if (entities.smart_daytime_watering) {
-          await this._setSwitch(entities.smart_daytime_watering, this._modeWizardDaytime);
-        }
-      } else if (this._modeWizardMode === "Repeating") {
-        if (entities.first_watering_time) {
-          await this._setTime(entities.first_watering_time, this._modeWizardStartTime());
-        }
-        if (entities.duration) {
-          await this._setNumber(entities.duration, this._modeWizardAmount);
-        }
-        if (entities.interval) {
-          await this._setNumber(entities.interval, this._modeWizardIntervalDays * 24);
-        }
-      }
+      // Apply the full watering configuration through the add-on API once.
+      // Sending HA entity updates here as well causes duplicate reset/set commands.
       await this._saveScheduleAfterEdit("Watering settings updated", {
         mode: this._normalizeMode(this._modeWizardMode),
         first_watering_time: this._modeWizardStartTime(),
@@ -6173,30 +6174,8 @@ class GrowcubeCard extends HTMLElement {
         const firstTime = `${String(firstHour).padStart(2, "0")}:${String(firstMinute).padStart(2, "0")}:00`;
         const amount = this._clamp(Number(this._editValue("schedule_amount")), 10, 500);
         const intervalHours = this._clamp(Number(this._editValue("schedule_days")), 1, 10) * 24;
-        if (entities.mode) {
-          await this._setSelect(entities.mode, modeValue);
-        }
-        if (modeValue === "Smart") {
-          if (entities.smart_min_moisture) {
-            await this._setNumber(entities.smart_min_moisture, smartMin);
-          }
-          if (entities.smart_max_moisture) {
-            await this._setNumber(entities.smart_max_moisture, smartMax);
-          }
-          if (entities.smart_daytime_watering) {
-            await this._setSwitch(entities.smart_daytime_watering, smartDaytime);
-          }
-        } else if (modeValue === "Repeating") {
-          if (entities.first_watering_time) {
-            await this._setTime(entities.first_watering_time, firstTime);
-          }
-          if (entities.duration) {
-            await this._setNumber(entities.duration, amount);
-          }
-          if (entities.interval) {
-            await this._setNumber(entities.interval, intervalHours);
-          }
-        }
+        // Apply the full watering configuration through the add-on API once.
+        // Sending HA entity updates here as well causes duplicate reset/set commands.
         await this._saveScheduleAfterEdit("Watering settings updated", {
           mode: modeValue,
           smart_min_moisture: smartMin,
@@ -6225,21 +6204,14 @@ class GrowcubeCard extends HTMLElement {
       } else if (kind === "smartRange") {
         const min = this._clamp(Number(this._editValue("smart_min")), 1, 98);
         const max = this._clamp(Number(this._editValue("smart_max")), min + 1, 99);
-        if (entities.smart_min_moisture) {
-          await this._setNumber(entities.smart_min_moisture, min);
-        }
-        if (entities.smart_max_moisture) {
-          await this._setNumber(entities.smart_max_moisture, max);
-        }
+        // Apply both limits together through the add-on API once.
         await this._saveScheduleAfterEdit("Moisture range updated", {
           smart_min_moisture: min,
           smart_max_moisture: max,
         });
       } else if (kind === "daytime") {
         const daytime = this._editValue("daytime") === "on";
-        if (entities.smart_daytime_watering) {
-          await this._setSwitch(entities.smart_daytime_watering, daytime);
-        }
+        // Apply through the add-on API once to avoid a duplicate firmware reset/set.
         await this._saveScheduleAfterEdit("Daytime watering updated", {
           smart_daytime_watering: daytime,
         });

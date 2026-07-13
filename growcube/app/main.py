@@ -1342,7 +1342,23 @@ class GrowCubeManager:
                     channel.config.plant_id = report.plant_id
                     restore_plant_id = report.plant_id
                     restore_force = previous_plant_id != report.plant_id
-                if report.mode == 1 and report.duration_seconds > 0 and report.interval_hours > 0:
+                plant_removed = report.has_plant_id and report.plant_id == 0 and report.mode == 0
+                if plant_removed:
+                    channel.last_watering = None
+                    channel.next_watering = None
+                    channel.plant_configured = False
+                    channel.history_loading = False
+                    channel.history_complete = False
+                    channel.watering_events_complete = False
+                    channel.history.clear()
+                    channel.watering_events.clear()
+                    channel.config = ChannelConfig()
+                    LOGGER.info(
+                        "Plant removed from GrowCube device=%s channel=%s",
+                        state.host,
+                        CHANNEL_NAMES[report.channel],
+                    )
+                elif report.mode == 1 and report.duration_seconds > 0 and report.interval_hours > 0:
                     next_watering = datetime_from_growcube_local_epoch(report.next_start_epoch)
                     channel.next_watering = next_watering.isoformat() if next_watering is not None else None
                     channel.config.mode = "Repeating"

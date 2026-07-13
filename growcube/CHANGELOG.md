@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.82
+
+- Clear the HA channel plant profile and cached plant history when GrowCube reports `plant_id=0` after deletion from Android.
+
 ## 0.2.81
 
 - Send complete plant profiles through `POST /channel/config` so long descriptions cannot exceed ingress URL limits.
