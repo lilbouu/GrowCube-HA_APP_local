@@ -3282,43 +3282,6 @@ class GrowcubeCard extends HTMLElement {
           color: var(--primary-color);
         }
 
-        .editable-title-row {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          max-width: 100%;
-          min-width: 0;
-        }
-
-        .editable-title-row .title {
-          min-width: 0;
-          overflow-wrap: anywhere;
-        }
-
-        .title-edit-button {
-          width: 30px;
-          height: 30px;
-          min-width: 30px;
-          border: 0;
-          border-radius: 50%;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          padding: 0;
-          background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
-          color: var(--secondary-text-color);
-          cursor: pointer;
-        }
-
-        .title-edit-button:hover {
-          color: var(--primary-text-color);
-          background: color-mix(in srgb, var(--primary-color) 14%, transparent);
-        }
-
-        .title-edit-button ha-icon {
-          --mdc-icon-size: 16px;
-        }
-
         .plant-menu-anchor {
           position: relative;
           justify-self: end;
@@ -4844,12 +4807,7 @@ class GrowcubeCard extends HTMLElement {
                 ${photoUrl ? `<img src="${this._escape(photoUrl)}" alt="" referrerpolicy="no-referrer">` : '<ha-icon icon="mdi:flower"></ha-icon>'}
               </div>
               <div>
-                <div class="editable-title-row">
-                  <div class="title" data-action="edit-plant-name" role="button" tabindex="0">${this._escape(this._plantName())}</div>
-                  <button type="button" class="title-edit-button" data-action="edit-plant-name" aria-label="Rename plant" title="Rename plant">
-                    <ha-icon icon="mdi:pencil"></ha-icon>
-                  </button>
-                </div>
+                <div class="title" data-action="edit-plant-name" role="button" tabindex="0">${this._escape(this._plantName())}</div>
                 <div class="channel-pill"><ha-icon icon="mdi:checkbox-blank-circle-outline"></ha-icon><span>${this._escape(this._config.channel || this._channelLabel())}</span></div>
               </div>
               <div class="plant-menu-anchor">
@@ -4942,12 +4900,7 @@ class GrowcubeCard extends HTMLElement {
                   ${photoUrl ? `<img src="${this._escape(photoUrl)}" alt="" referrerpolicy="no-referrer">` : '<ha-icon icon="mdi:flower"></ha-icon>'}
                 </div>
                 <div>
-                  <div class="editable-title-row">
-                    <div class="title" data-action="edit-plant-name" role="button" tabindex="0">${this._escape(this._plantName())}</div>
-                    <button type="button" class="title-edit-button" data-action="edit-plant-name" aria-label="Rename plant" title="Rename plant">
-                      <ha-icon icon="mdi:pencil"></ha-icon>
-                    </button>
-                  </div>
+                  <div class="title">${this._escape(this._plantName())}</div>
                   <div class="subtitle">${this._escape(category)}</div>
                 </div>
               </div>
@@ -5671,7 +5624,7 @@ class GrowcubeCard extends HTMLElement {
       ${this._modeWizardMode === "Repeating" ? `
         <div class="grid">
           <div class="field time-field">
-            <div class="label">First watering</div>
+            <div class="label">Watering time</div>
             <input type="time" data-action="mode-wizard-start-time" value="${this._modeWizardStartTime().slice(0, 5)}">
           </div>
           <label class="field">
@@ -5927,7 +5880,7 @@ class GrowcubeCard extends HTMLElement {
       ${this._plantWizardMode === "Repeating" ? `
         <div class="grid">
           <div class="field time-field">
-            <div class="label">First watering</div>
+            <div class="label">Watering time</div>
             <input type="time" data-action="plant-wizard-start-time" value="${this._plantWizardStartTime().slice(0, 5)}">
           </div>
           <label class="field">
@@ -6120,7 +6073,7 @@ class GrowcubeCard extends HTMLElement {
           </label>
           <div class="section-title">Timed watering</div>
           <div class="field time-field">
-            <div class="label">First watering</div>
+            <div class="label">Watering time</div>
             <input type="time" data-edit-field="first_time" value="${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}">
           </div>
           <label class="field">
@@ -6168,7 +6121,7 @@ class GrowcubeCard extends HTMLElement {
         `,
       },
       firstWatering: {
-        title: "First watering",
+        title: "Watering time",
         body: `
           <div class="field time-field">
             <input type="time" data-edit-field="first_time" value="${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}">
@@ -6437,7 +6390,7 @@ class GrowcubeCard extends HTMLElement {
         if (entities.first_watering_time) {
           await this._setTime(entities.first_watering_time, firstTime);
         }
-        await this._saveScheduleAfterEdit("First watering updated", {
+        await this._saveScheduleAfterEdit("Watering time updated", {
           ...this._currentTimedWateringValues(entities),
           first_watering_time: firstTime,
         });

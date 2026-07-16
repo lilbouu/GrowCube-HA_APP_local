@@ -2391,6 +2391,7 @@ let deviceSettingsUpdateAvailable = false;
 let deviceSettingsLatestVersion = "";
 let deviceSettingsConfirm = "";
 let deviceSettingsUpdateAcknowledged = false;
+let deviceSettingsRenameValue = "";
 const LOCAL_FIRMWARE_LABEL = "local firmware";
 
 function iconSvg(icon) {
@@ -2616,6 +2617,7 @@ function openDeviceSettings(deviceId) {
   deviceSettingsLatestVersion = "";
   deviceSettingsConfirm = "";
   deviceSettingsUpdateAcknowledged = false;
+  deviceSettingsRenameValue = "";
   renderDeviceSettingsModal();
   checkFirmware(deviceId);
 }
@@ -2629,6 +2631,7 @@ function closeDeviceSettings() {
   deviceSettingsLatestVersion = "";
   deviceSettingsConfirm = "";
   deviceSettingsUpdateAcknowledged = false;
+  deviceSettingsRenameValue = "";
   renderDeviceSettingsModal();
 }
 
@@ -2656,7 +2659,72 @@ function renderDeviceSettingsModal() {
   const updateAvailable = deviceSettingsUpdateAvailable && deviceSettingsLatestVersion;
   const confirmingUpdate = deviceSettingsConfirm === "update_firmware";
   const confirmingReset = deviceSettingsConfirm === "reset_network";
+  const renamingDevice = deviceSettingsConfirm === "rename_device";
   modal.classList.remove("hidden");
+  if (renamingDevice) {
+    modal.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Rename GrowCube">
+        <div class="modal-header">
+          <div>
+            <h2>Rename GrowCube</h2>
+            <div class="meta">${escapeHtml(device.host)}</div>
+          </div>
+          <button class="icon-control" type="button" data-close-device-settings aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <label class="settings-stat">
+            <div class="label">Name</div>
+            <input id="deviceRenameInput" value="${escapeHtml(deviceSettingsRenameValue)}" maxlength="64">
+          </label>
+          <div class="modal-actions">
+            <button class="secondary" data-cancel-device-confirm>Cancel</button>
+            <button data-confirm-rename-device="${escapeHtml(device.device_id)}">Save</button>
+          </div>
+          <div class="modal-status">
+            ${busy ? '<span class="spinner"></span>' : ""}
+            <span class="${messageClass}">${escapeHtml(message)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    setTimeout(() => {
+      const input = document.getElementById("deviceRenameInput");
+      input?.focus();
+      input?.select();
+    }, 0);
+    return;
+  }
+  if (confirmingReset) {
+    modal.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Reset network">
+        <div class="modal-header">
+          <div>
+            <h2>Reset network</h2>
+            <div class="meta">${escapeHtml(device.name || "GrowCube")} · ${escapeHtml(device.host)}</div>
+          </div>
+          <button class="icon-control" type="button" data-close-device-settings aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="warning-box">
+            Reset Wi-Fi settings? GrowCube will restart, leave this network, and must be configured again.
+          </div>
+          <div class="modal-actions">
+            <button class="secondary" data-cancel-device-confirm>Cancel</button>
+            <button class="danger" data-confirm-reset-network="${escapeHtml(device.device_id)}">Reset network</button>
+          </div>
+          <div class="modal-status">
+            ${busy ? '<span class="spinner"></span>' : ""}
+            <span class="${messageClass}">${escapeHtml(message)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
   modal.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-label="Device settings">
       <div class="modal-header">
@@ -2699,15 +2767,6 @@ function renderDeviceSettingsModal() {
           ${updateAvailable ? `<button data-update-firmware="${escapeHtml(device.device_id)}" ${busy || !device.connected || confirmingUpdate ? "disabled" : ""}>Update firmware</button>` : ""}
           <button class="danger" data-reset-network="${escapeHtml(device.device_id)}" ${busy || !device.connected || confirmingReset ? "disabled" : ""}>Reset network</button>
         </div>
-        ${confirmingReset ? `
-          <div class="warning-box">
-            Reset Wi-Fi settings? GrowCube will restart, leave this network, and must be configured again.
-            <div class="modal-actions" style="margin-top:10px">
-              <button class="secondary" data-cancel-device-confirm>Cancel</button>
-              <button class="danger" data-confirm-reset-network="${escapeHtml(device.device_id)}">Reset network</button>
-            </div>
-          </div>
-        ` : ""}
         <div class="modal-status">
           ${busy ? '<span class="spinner"></span>' : ""}
           <span class="${messageClass}">${escapeHtml(message || (busy ? "Working..." : "Your GrowCube is up to date."))}</span>
@@ -2758,6 +2817,17 @@ function askUpdateFirmware(deviceId) {
   if (!findDevice(deviceId)) return;
   deviceSettingsConfirm = "update_firmware";
   deviceSettingsUpdateAcknowledged = false;
+  deviceSettingsRenameValue = "";
+  deviceSettingsMessage = "";
+  deviceSettingsTone = "";
+  renderDeviceSettingsModal();
+}
+
+function askRenameDevice(deviceId) {
+  const device = findDevice(deviceId);
+  if (!device) return;
+  deviceSettingsConfirm = "rename_device";
+  deviceSettingsRenameValue = device.name || "GrowCube";
   deviceSettingsMessage = "";
   deviceSettingsTone = "";
   renderDeviceSettingsModal();
@@ -2766,17 +2836,25 @@ function askUpdateFirmware(deviceId) {
 async function renameDevice(deviceId) {
   const device = findDevice(deviceId);
   if (!device) return;
-  const name = String(window.prompt("GrowCube name", device.name || "GrowCube") || "").trim();
+  const input = document.getElementById("deviceRenameInput");
+  const name = String(input?.value || "").trim();
+  deviceSettingsRenameValue = name;
   if (!name) {
+    setDeviceSettingsStatus("Name is required.", "error", "");
     return;
   }
   if (name === (device.name || "GrowCube")) {
+    deviceSettingsConfirm = "";
+    deviceSettingsRenameValue = "";
+    renderDeviceSettingsModal();
     return;
   }
   setDeviceSettingsStatus("Saving device name...", "", "saving");
   try {
     const params = new URLSearchParams({device_id: deviceId, name});
     await fetchJson("devices/rename?" + params.toString());
+    deviceSettingsConfirm = "";
+    deviceSettingsRenameValue = "";
     await refreshDashboard(true);
     setDeviceSettingsStatus("Device name saved.", "ok", "");
   } catch (err) {
@@ -2787,6 +2865,7 @@ async function renameDevice(deviceId) {
 function askResetNetwork(deviceId) {
   if (!findDevice(deviceId)) return;
   deviceSettingsConfirm = "reset_network";
+  deviceSettingsRenameValue = "";
   deviceSettingsMessage = "";
   deviceSettingsTone = "";
   renderDeviceSettingsModal();
@@ -2795,6 +2874,7 @@ function askResetNetwork(deviceId) {
 function cancelDeviceConfirm() {
   deviceSettingsConfirm = "";
   deviceSettingsUpdateAcknowledged = false;
+  deviceSettingsRenameValue = "";
   renderDeviceSettingsModal();
 }
 
@@ -2881,11 +2961,12 @@ window.addEventListener("popstate", () => {
   updateDashboardCard();
 });
 document.addEventListener("click", async (event) => {
-  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-rename-device],[data-check-firmware],[data-update-firmware],[data-confirm-update-firmware],[data-reset-network],[data-confirm-reset-network],[data-cancel-device-confirm],[data-close-device-settings]");
+  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-rename-device],[data-confirm-rename-device],[data-check-firmware],[data-update-firmware],[data-confirm-update-firmware],[data-reset-network],[data-confirm-reset-network],[data-cancel-device-confirm],[data-close-device-settings]");
   const addHost = actionTarget?.dataset?.add;
   const removeId = actionTarget?.dataset?.remove;
   const settingsId = actionTarget?.dataset?.deviceSettings;
   const renameId = actionTarget?.dataset?.renameDevice;
+  const confirmRenameId = actionTarget?.dataset?.confirmRenameDevice;
   const checkId = actionTarget?.dataset?.checkFirmware;
   const updateId = actionTarget?.dataset?.updateFirmware;
   const confirmUpdateId = actionTarget?.dataset?.confirmUpdateFirmware;
@@ -2901,7 +2982,8 @@ document.addEventListener("click", async (event) => {
   }
   if (addHost) await addDevice(addHost, actionTarget.dataset.name || addHost);
   if (settingsId) openDeviceSettings(settingsId);
-  if (renameId) await renameDevice(renameId);
+  if (renameId) askRenameDevice(renameId);
+  if (confirmRenameId) await renameDevice(confirmRenameId);
   if (checkId) await checkFirmware(checkId);
   if (updateId) askUpdateFirmware(updateId);
   if (confirmUpdateId) await updateFirmware(confirmUpdateId);
@@ -2910,12 +2992,28 @@ document.addEventListener("click", async (event) => {
   if (removeId) await removeDevice(removeId);
 });
 
+document.addEventListener("input", (event) => {
+  if (event.target?.id === "deviceRenameInput") {
+    deviceSettingsRenameValue = event.target.value;
+  }
+});
+
 document.addEventListener("change", (event) => {
-  if (event.target?.dataset?.updateAck === undefined) {
+  if (event.target?.id === "deviceRenameInput") {
     return;
   }
-  deviceSettingsUpdateAcknowledged = Boolean(event.target.checked);
-  renderDeviceSettingsModal();
+  if (event.target?.dataset?.updateAck !== undefined) {
+    deviceSettingsUpdateAcknowledged = Boolean(event.target.checked);
+    renderDeviceSettingsModal();
+  }
+});
+
+document.addEventListener("keydown", async (event) => {
+  if (event.key !== "Enter" || event.target?.id !== "deviceRenameInput" || !deviceSettingsId) {
+    return;
+  }
+  event.preventDefault();
+  await renameDevice(deviceSettingsId);
 });
 
 refreshDashboard(true).catch((err) => {
