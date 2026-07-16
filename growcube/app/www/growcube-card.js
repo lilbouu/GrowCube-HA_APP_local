@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.84-firmware-update";
+const GROWCUBE_CARD_VERSION = "0.2.87-device-settings-actions";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
 class GrowcubeCard extends HTMLElement {
@@ -4514,8 +4514,6 @@ class GrowcubeCard extends HTMLElement {
       profile.airHumidityMax,
     );
     const firmwareVersion = device?.version ? `Version ${device.version}` : "Unknown";
-    const firmwareUpdateStatus = this._entityDisplay(deviceEntities.firmware_update_status, device?.firmware_update_status || "idle");
-    const firmwareUpdateBusy = String(firmwareUpdateStatus).toLowerCase() === "updating";
     return `
       <div class="card">
         <div class="header">
@@ -4546,13 +4544,7 @@ class GrowcubeCard extends HTMLElement {
             <div class="label">Firmware</div>
             <div class="value">${this._escape(firmwareVersion)}</div>
           </div>
-          <div class="stat">
-            <div class="label">Update</div>
-            <div class="value">${this._escape(firmwareUpdateStatus)}</div>
-          </div>
         </div>
-        <button type="button" class="wide-button" data-action="update-firmware" ${firmwareUpdateBusy ? "disabled" : ""}>Update firmware</button>
-        <button type="button" class="wide-button danger" data-action="reset-network">Reset network</button>
       </div>
     `;
   }

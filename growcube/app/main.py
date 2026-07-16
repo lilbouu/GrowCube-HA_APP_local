@@ -2101,6 +2101,14 @@ def web_ui_html() -> str:
       padding: 12px;
     }
     .item > button { justify-self: end; }
+    .item-actions {
+      display: inline-flex;
+      gap: 8px;
+      justify-self: end;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .item-actions button { min-width: 92px; }
     .title { font-weight: 650; overflow-wrap: anywhere; }
     .meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
     .status {
@@ -2115,6 +2123,80 @@ def web_ui_html() -> str:
     .dot.ok { background: var(--ok); }
     .dot.warn { background: var(--warn); }
     .dot.bad { background: var(--bad); }
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.42);
+      padding: 18px;
+    }
+    .modal {
+      width: min(560px, 100%);
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+    }
+    .modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .modal-header h2 { margin: 0; }
+    .modal-body { display: grid; gap: 14px; }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .settings-stat {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .settings-stat .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 3px;
+    }
+    .settings-stat .value { font-weight: 650; overflow-wrap: anywhere; }
+    .warning-box {
+      border: 1px solid color-mix(in srgb, var(--warn) 48%, transparent);
+      border-radius: 8px;
+      padding: 10px;
+      color: var(--text);
+      background: color-mix(in srgb, var(--warn) 12%, transparent);
+    }
+    .modal-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .modal-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 24px;
+      color: var(--muted);
+    }
     .empty { color: var(--muted); padding: 10px 0; }
     .error { color: var(--bad); }
     .hidden { display: none; }
@@ -2142,7 +2224,9 @@ def web_ui_html() -> str:
       main { padding: 16px; }
       .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 0; }
       .item { grid-template-columns: 1fr; display: grid; }
+      .item-actions { width: 100%; justify-self: stretch; }
       .item button:not(.icon-control) { width: 100%; justify-self: stretch; }
+      .settings-grid { grid-template-columns: 1fr; }
       .discover-actions button { flex: 1 1 100%; }
     }
   </style>
@@ -2212,6 +2296,7 @@ def web_ui_html() -> str:
       </div>
     </section>
   </div>
+  <div id="deviceSettingsModal" class="modal-backdrop hidden"></div>
 </main>
 <script>
 window.GROWCUBE_STANDALONE_WEBUI = true;
@@ -2240,6 +2325,10 @@ const basePath = window.location.pathname.endsWith("/") ? (window.location.pathn
 const addonApiUrl = `${window.location.origin}${basePath === "/" ? "" : basePath}`;
 window.GROWCUBE_STANDALONE_ADDON_API_URL = addonApiUrl;
 let dashboardPayload = {devices: []};
+let deviceSettingsId = "";
+let deviceSettingsBusy = "";
+let deviceSettingsMessage = "";
+let deviceSettingsTone = "";
 
 function iconSvg(icon) {
   const common = 'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
@@ -2408,6 +2497,7 @@ function renderDevices(payload) {
   const devices = payload.devices || [];
   if (!devices.length) {
     devicesEl.innerHTML = '<div class="empty">No devices added yet.</div>';
+    renderDeviceSettingsModal();
     return;
   }
   devicesEl.innerHTML = devices.map((device) => {
@@ -2421,10 +2511,14 @@ function renderDevices(payload) {
           <div class="meta">${escapeHtml(device.host)} · ${version}${configured}/4 channels configured</div>
           <div class="status"><span class="dot ${status.cls}"></span>${escapeHtml(status.text)}</div>
         </div>
-        <button class="danger" data-remove="${escapeHtml(device.device_id)}">Remove</button>
+        <div class="item-actions">
+          <button class="secondary" data-device-settings="${escapeHtml(device.device_id)}">Settings</button>
+          <button class="danger" data-remove="${escapeHtml(device.device_id)}">Remove</button>
+        </div>
       </div>
     `;
   }).join("");
+  renderDeviceSettingsModal();
 }
 
 async function refreshDevices() {
@@ -2442,7 +2536,138 @@ async function addDevice(host, name) {
 async function removeDevice(deviceId) {
   const params = new URLSearchParams({device_id: deviceId});
   await fetchJson("devices/remove?" + params.toString());
+  if (deviceSettingsId === deviceId) closeDeviceSettings();
   await refreshDashboard(true);
+}
+
+function findDevice(deviceId) {
+  return (dashboardPayload.devices || []).find((device) => device.device_id === deviceId);
+}
+
+function openDeviceSettings(deviceId) {
+  deviceSettingsId = deviceId;
+  deviceSettingsBusy = "";
+  deviceSettingsMessage = "";
+  deviceSettingsTone = "";
+  renderDeviceSettingsModal();
+}
+
+function closeDeviceSettings() {
+  deviceSettingsId = "";
+  deviceSettingsBusy = "";
+  deviceSettingsMessage = "";
+  deviceSettingsTone = "";
+  renderDeviceSettingsModal();
+}
+
+function setDeviceSettingsStatus(message, tone = "", busy = "") {
+  deviceSettingsMessage = message;
+  deviceSettingsTone = tone;
+  deviceSettingsBusy = busy;
+  renderDeviceSettingsModal();
+}
+
+function renderDeviceSettingsModal() {
+  const modal = document.getElementById("deviceSettingsModal");
+  const device = findDevice(deviceSettingsId);
+  if (!device) {
+    modal.classList.add("hidden");
+    modal.innerHTML = "";
+    return;
+  }
+  const status = deviceStatus(device);
+  const updateStatus = device.firmware_update_status || "idle";
+  const updateError = device.firmware_update_error || "";
+  const busy = Boolean(deviceSettingsBusy) || updateStatus === "updating";
+  const message = deviceSettingsMessage || (updateError ? updateError : "");
+  const messageClass = deviceSettingsTone === "error" || updateError ? "error" : "meta";
+  modal.classList.remove("hidden");
+  modal.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Device settings">
+      <div class="modal-header">
+        <div>
+          <h2>${escapeHtml(device.name || "GrowCube")}</h2>
+          <div class="meta">${escapeHtml(device.host)}</div>
+        </div>
+        <button class="icon-control" type="button" data-close-device-settings aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-grid">
+          <div class="settings-stat">
+            <div class="label">Connection</div>
+            <div class="value"><span class="dot ${status.cls}"></span> ${escapeHtml(status.text)}</div>
+          </div>
+          <div class="settings-stat">
+            <div class="label">Firmware</div>
+            <div class="value">${escapeHtml(device.version || "Unknown")}</div>
+          </div>
+          <div class="settings-stat">
+            <div class="label">Update status</div>
+            <div class="value">${escapeHtml(updateStatus)}</div>
+          </div>
+          <div class="settings-stat">
+            <div class="label">Available update</div>
+            <div class="value">Latest installed</div>
+          </div>
+        </div>
+        <div class="warning-box">
+          Do not unplug GrowCube, turn off power, restart Home Assistant, or disconnect the network during firmware update. The device will restart automatically after the update.
+        </div>
+        <div class="modal-actions">
+          <button class="secondary" data-check-firmware="${escapeHtml(device.device_id)}" ${busy ? "disabled" : ""}>Check update</button>
+          <button data-update-firmware="${escapeHtml(device.device_id)}" ${busy || !device.connected ? "disabled" : ""}>Update firmware</button>
+          <button class="danger" data-reset-network="${escapeHtml(device.device_id)}" ${busy || !device.connected ? "disabled" : ""}>Reset network</button>
+        </div>
+        <div class="modal-status">
+          ${busy ? '<span class="spinner"></span>' : ""}
+          <span class="${messageClass}">${escapeHtml(message || (busy ? "Working..." : "Ready"))}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function checkFirmware(deviceId) {
+  if (!findDevice(deviceId)) return;
+  setDeviceSettingsStatus("Checking firmware version...", "", "checking");
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  setDeviceSettingsStatus("You are using the latest firmware.", "ok", "");
+}
+
+async function updateFirmware(deviceId) {
+  const device = findDevice(deviceId);
+  if (!device) return;
+  if (!window.confirm("Do not unplug GrowCube or turn off power during firmware update. The device will restart automatically. Continue?")) {
+    return;
+  }
+  setDeviceSettingsStatus("Preparing OTA mode. Do not unplug GrowCube.", "", "updating");
+  try {
+    const params = new URLSearchParams({device_id: deviceId});
+    await fetchJson("devices/firmware/update?" + params.toString());
+    setDeviceSettingsStatus("Firmware uploaded. GrowCube is restarting; waiting for reconnect.", "ok", "");
+    await refreshDashboard(true);
+  } catch (err) {
+    setDeviceSettingsStatus(err.message || "Firmware update failed", "error", "");
+  }
+}
+
+async function resetNetwork(deviceId) {
+  const device = findDevice(deviceId);
+  if (!device) return;
+  if (!window.confirm("Reset Wi-Fi settings? GrowCube will restart, leave this network, and must be configured again.")) {
+    return;
+  }
+  setDeviceSettingsStatus("Resetting network settings...", "", "resetting");
+  try {
+    const params = new URLSearchParams({device_id: deviceId});
+    await fetchJson("devices/reset_network?" + params.toString());
+    setDeviceSettingsStatus("Network reset requested. GrowCube will restart and leave this network.", "ok", "");
+    await refreshDashboard(true);
+  } catch (err) {
+    setDeviceSettingsStatus(err.message || "Network reset failed", "error", "");
+  }
 }
 
 async function discoverDevices() {
@@ -2513,9 +2738,22 @@ window.addEventListener("popstate", () => {
   updateDashboardCard();
 });
 document.addEventListener("click", async (event) => {
-  const addHost = event.target?.dataset?.add;
-  const removeId = event.target?.dataset?.remove;
-  if (addHost) await addDevice(addHost, event.target.dataset.name || addHost);
+  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-check-firmware],[data-update-firmware],[data-reset-network],[data-close-device-settings]");
+  const addHost = actionTarget?.dataset?.add;
+  const removeId = actionTarget?.dataset?.remove;
+  const settingsId = actionTarget?.dataset?.deviceSettings;
+  const checkId = actionTarget?.dataset?.checkFirmware;
+  const updateId = actionTarget?.dataset?.updateFirmware;
+  const resetId = actionTarget?.dataset?.resetNetwork;
+  if (actionTarget?.dataset?.closeDeviceSettings !== undefined || event.target?.id === "deviceSettingsModal") {
+    closeDeviceSettings();
+    return;
+  }
+  if (addHost) await addDevice(addHost, actionTarget.dataset.name || addHost);
+  if (settingsId) openDeviceSettings(settingsId);
+  if (checkId) await checkFirmware(checkId);
+  if (updateId) await updateFirmware(updateId);
+  if (resetId) await resetNetwork(resetId);
   if (removeId) await removeDevice(removeId);
 });
 
