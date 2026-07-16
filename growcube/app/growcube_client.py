@@ -251,6 +251,12 @@ class GrowCubeClient:
         self._manual_tasks.add(task)
         task.add_done_callback(self._manual_tasks.discard)
 
+    async def reset_network(self) -> None:
+        await self.send(b"ele507")
+
+    async def start_firmware_update(self) -> None:
+        await self.send(b"ele504")
+
     async def _close_after(self, channel: int, duration: int) -> None:
         await asyncio.sleep(max(1, int(duration)))
         await self.close_pump(channel)

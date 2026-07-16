@@ -15,4 +15,4 @@ __pycache__/
 *.log
 growcube_state.json
 options.json
-
+growcube/app/firmware/*.bin

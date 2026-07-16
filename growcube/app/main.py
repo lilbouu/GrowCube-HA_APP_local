@@ -61,6 +61,7 @@ OPTIONS_PATH = DATA_DIR / "options.json"
 APP_DIR = Path(__file__).parent
 CARD_SOURCE_PATH = APP_DIR / "www" / "growcube-card.js"
 CARD_IMAGE_SOURCE_DIR = APP_DIR / "www" / "images"
+FIRMWARE_IMAGE_PATH = APP_DIR / "firmware" / "growcube-local.bin"
 PLANT_PHOTO_DIR = DATA_DIR / "plant_photos"
 CARD_API_URL_PLACEHOLDER = "__GROWCUBE_ADDON_API_URL__"
 DEFAULT_INGRESS_PORT = 8099
@@ -99,6 +100,9 @@ TIMED_HISTORY_REFRESH_GRACE_SECONDS = 5
 TIMED_HISTORY_REFRESH_RETRY_SECONDS = 15
 HISTORY_TRAILING_GAP_RETRY_SECONDS = 60 * 60
 HISTORY_TRAILING_GAP_HOURS = 0
+FIRMWARE_OTA_READY_DELAY_SECONDS = 20
+FIRMWARE_UPLOAD_TIMEOUT_SECONDS = 120
+FIRMWARE_MAX_BYTES = 4 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -165,6 +169,9 @@ class DeviceState:
     tank_remaining_ml: int = 1500
     tank_used_ml: int = 0
     tank_forecast: dict[str, Any] = field(default_factory=dict)
+    firmware_update_status: str = "idle"
+    firmware_update_error: str = ""
+    firmware_update_started_at: str | None = None
     updated_at: str | None = None
     channels: list[ChannelState] = field(default_factory=lambda: [ChannelState() for _ in range(4)])
 
@@ -379,6 +386,31 @@ class GrowCubeManager:
             "mode": state.channels[channel].config.mode,
         }
 
+    def reset_network_payload(self, device_id: str) -> dict[str, Any]:
+        state = self.find_device(device_id) if device_id else next(iter(self.devices.values()), None)
+        if state is None:
+            raise KeyError("device not found")
+        future = self.submit(self.reset_network(state.id))
+        future.result(timeout=10)
+        return {
+            "ok": True,
+            "message": "network reset requested",
+            "device_id": mqtt_device_unique_id(self._state_to_dict(state)),
+        }
+
+    def firmware_update_payload(self, device_id: str) -> dict[str, Any]:
+        state = self.find_device(device_id) if device_id else next(iter(self.devices.values()), None)
+        if state is None:
+            raise KeyError("device not found")
+        future = self.submit(self.update_firmware(state.id))
+        result = future.result(timeout=FIRMWARE_UPLOAD_TIMEOUT_SECONDS + FIRMWARE_OTA_READY_DELAY_SECONDS + 20)
+        return {
+            "ok": True,
+            "message": "firmware update uploaded",
+            "device_id": mqtt_device_unique_id(self._state_to_dict(state)),
+            **result,
+        }
+
     def discover_payload(self, network_value: str) -> dict[str, Any]:
         future = self.submit(self.discover_devices(network_value))
         devices = future.result(timeout=45)
@@ -477,6 +509,9 @@ class GrowCubeManager:
             "connecting": state.connecting,
             "error": state.error,
             "version": state.version or "",
+            "firmware_update_status": state.firmware_update_status,
+            "firmware_update_error": state.firmware_update_error,
+            "firmware_update_started_at": state.firmware_update_started_at,
             "addon_api_url": device.get("addon_api_url") or "",
             "entities": entities,
             "channels": channels,
@@ -567,6 +602,67 @@ class GrowCubeManager:
         if runtime is None or runtime.client is None or not runtime.client.connected:
             raise RuntimeError("device is not connected")
         await runtime.client.close_pump(validate_channel(channel))
+
+    async def reset_network(self, device_id: str) -> None:
+        state = self.devices.get(device_id)
+        if state is None:
+            raise KeyError(device_id)
+        runtime = self.runtimes.get(device_id)
+        if runtime is None or runtime.client is None or not runtime.client.connected:
+            raise RuntimeError("device is not connected")
+        LOGGER.warning("Reset network requested device=%s", state.host)
+        await runtime.client.reset_network()
+        async with self.async_lock:
+            state.connected = False
+            state.connecting = False
+            if state.connection_problem_since is None:
+                state.connection_problem_since = now_iso()
+            self.touch_locked(state)
+
+    async def update_firmware(self, device_id: str) -> dict[str, Any]:
+        state = self.devices.get(device_id)
+        if state is None:
+            raise KeyError(device_id)
+        runtime = self.runtimes.get(device_id)
+        if runtime is None or runtime.client is None or not runtime.client.connected:
+            raise RuntimeError("device is not connected")
+        firmware = validate_firmware_image(FIRMWARE_IMAGE_PATH)
+        async with self.async_lock:
+            state.firmware_update_status = "updating"
+            state.firmware_update_error = ""
+            state.firmware_update_started_at = now_iso()
+            self.touch_locked(state)
+        LOGGER.warning("Firmware update requested device=%s firmware=%s bytes=%s", state.host, firmware.name, firmware.stat().st_size)
+        try:
+            await runtime.client.start_firmware_update()
+            await asyncio.sleep(FIRMWARE_OTA_READY_DELAY_SECONDS)
+            upload_result = await asyncio.to_thread(upload_firmware_image, state.host, firmware)
+        except Exception as err:
+            async with self.async_lock:
+                state.firmware_update_status = "error"
+                state.firmware_update_error = str(err)
+                state.connected = False
+                state.connecting = True
+                if state.connection_problem_since is None:
+                    state.connection_problem_since = now_iso()
+                self.touch_locked(state)
+            if runtime.client is not None:
+                await runtime.client.disconnect()
+            runtime.schedule_reconnect()
+            raise
+        else:
+            async with self.async_lock:
+                state.firmware_update_status = "uploaded"
+                state.firmware_update_error = ""
+                state.connected = False
+                state.connecting = True
+                if state.connection_problem_since is None:
+                    state.connection_problem_since = now_iso()
+                self.touch_locked(state)
+            if runtime.client is not None:
+                await runtime.client.disconnect()
+            runtime.schedule_reconnect()
+            return upload_result
 
     async def request_history(self, device_id: str, channel: int) -> None:
         runtime = self.runtimes.get(device_id)
@@ -1034,6 +1130,10 @@ class GrowCubeManager:
                 state.tank_used_ml = 0
                 tank_update = (state.tank_capacity_ml, state.tank_remaining_ml)
                 changed = "tank marked full"
+            elif key == "reset_network":
+                changed = "network reset requested"
+            elif key == "update_firmware":
+                changed = "firmware update requested"
             elif channel is not None:
                 config = state.channels[channel].config
                 if key.startswith("water_plant_"):
@@ -1121,6 +1221,10 @@ class GrowCubeManager:
             async with self.async_lock:
                 state.channels[reset_channel] = ChannelState()
                 self.touch_locked(state)
+        elif key == "reset_network":
+            await self.reset_network(state.id)
+        elif key == "update_firmware":
+            await self.update_firmware(state.id)
         elif tank_update is not None:
             await self.set_tank_level(state.id, tank_update[0], tank_update[1])
         elif channel is not None and schedule_apply:
@@ -1542,6 +1646,9 @@ class GrowCubeManager:
             tank_remaining_ml=clamp_int(item.get("tank_remaining_ml"), 0, 50000, 1500),
             tank_used_ml=clamp_int(item.get("tank_used_ml"), 0, 50000, 0),
             tank_forecast=item.get("tank_forecast") if isinstance(item.get("tank_forecast"), dict) else {},
+            firmware_update_status=str(item.get("firmware_update_status") or "idle"),
+            firmware_update_error=str(item.get("firmware_update_error") or ""),
+            firmware_update_started_at=item.get("firmware_update_started_at"),
             updated_at=item.get("updated_at"),
             channels=channels,
         )
@@ -1577,6 +1684,9 @@ class GrowCubeManager:
             "tank_unusable_reserve_ml": unusable_reserve_ml,
             "tank_usable_remaining_ml": usable_remaining_ml,
             "tank_forecast": state.tank_forecast,
+            "firmware_update_status": state.firmware_update_status,
+            "firmware_update_error": state.firmware_update_error,
+            "firmware_update_started_at": state.firmware_update_started_at,
             "updated_at": state.updated_at,
             "channels": [
                 {
@@ -2489,6 +2599,10 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
                 self._write_json(manager.add_device_payload(params))
             elif parsed.path == "/devices/remove":
                 self._write_json(manager.remove_device_payload(params))
+            elif parsed.path == "/devices/reset_network":
+                self._write_json(manager.reset_network_payload(first_query_value(params, "device_id")))
+            elif parsed.path == "/devices/firmware/update":
+                self._write_json(manager.firmware_update_payload(first_query_value(params, "device_id")))
             elif parsed.path == "/entity/command":
                 self._write_json(manager.entity_command_payload(params))
             elif parsed.path == "/history":
@@ -2519,6 +2633,8 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
         except KeyError as err:
             self._write_json({"error": str(err)}, HTTPStatus.NOT_FOUND)
         except ValueError as err:
+            self._write_json({"error": str(err)}, HTTPStatus.BAD_REQUEST)
+        except RuntimeError as err:
             self._write_json({"error": str(err)}, HTTPStatus.BAD_REQUEST)
         except Exception as err:
             LOGGER.exception("GrowCube ingress API request failed: %s", self.path)
@@ -2919,8 +3035,11 @@ def dashboard_device_entities(device_id: str) -> dict[str, str]:
         "tank_remaining": entity_id("sensor", device_id, "tank_remaining"),
         "tank_level": entity_id("sensor", device_id, "tank_level"),
         "tank_days_left": entity_id("sensor", device_id, "tank_days_left"),
+        "firmware_update_status": entity_id("sensor", device_id, "firmware_update_status"),
         "tank_capacity": entity_id("number", device_id, "tank_capacity"),
         "mark_tank_full": entity_id("button", device_id, "mark_tank_full"),
+        "reset_network": entity_id("button", device_id, "reset_network"),
+        "update_firmware": entity_id("button", device_id, "update_firmware"),
     }
 
 
@@ -3002,7 +3121,16 @@ def dashboard_entity_states(
         forecast=device.get("tank_forecast") or {},
     )
     add(entities["tank_capacity"], device.get("tank_capacity_ml"), unit_of_measurement="mL")
+    add(
+        entities["firmware_update_status"],
+        device.get("firmware_update_status") or "idle",
+        installed_version=device.get("version"),
+        firmware_update_error=device.get("firmware_update_error") or "",
+        firmware_update_started_at=device.get("firmware_update_started_at"),
+    )
     add(entities["mark_tank_full"], "unknown")
+    add(entities["reset_network"], "unknown")
+    add(entities["update_firmware"], "unknown")
 
     device_channels = device.get("channels") or []
     for index, channel_key in enumerate("abcd"):
@@ -3133,6 +3261,66 @@ def fetch_remote_image(url_value: str) -> tuple[bytes, str]:
         if not content_type.startswith("image/"):
             raise ValueError("remote url is not an image")
         return response.read(), content_type
+
+
+def validate_firmware_image(path: Path) -> Path:
+    if not path.is_file():
+        raise RuntimeError(f"firmware image not found: {path}")
+    if path.suffix.lower() != ".bin":
+        raise RuntimeError(f"firmware image must be a .bin file: {path.name}")
+    size = path.stat().st_size
+    if size <= 0:
+        raise RuntimeError(f"firmware image is empty: {path.name}")
+    if size > FIRMWARE_MAX_BYTES:
+        raise RuntimeError(f"firmware image is too large: {size} bytes")
+    return path
+
+
+def upload_firmware_image(host: str, path: Path) -> dict[str, Any]:
+    firmware = validate_firmware_image(path)
+    boundary = f"----GrowCubeFirmware{uuid.uuid4().hex}"
+    filename = "GrowCube-Software.bin"
+    header = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        "Content-Type: application/octet-stream\r\n"
+        "\r\n"
+    ).encode("ascii")
+    footer = f"\r\n--{boundary}--\r\n".encode("ascii")
+    body = header + firmware.read_bytes() + footer
+    url = f"http://{http_host(host)}/update"
+    request = Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": f"multipart/form-data;boundary={boundary}",
+            "Content-Length": str(len(body)),
+            "Connection": "close",
+        },
+        method="POST",
+    )
+    LOGGER.info("Uploading firmware to %s bytes=%s image=%s", url, firmware.stat().st_size, firmware.name)
+    try:
+        with urlopen(request, timeout=FIRMWARE_UPLOAD_TIMEOUT_SECONDS) as response:
+            response_body = response.read(4096).decode("utf-8", errors="replace")
+            return {
+                "status": int(response.status),
+                "firmware": firmware.name,
+                "bytes": firmware.stat().st_size,
+                "response": response_body[:240],
+            }
+    except HTTPError as err:
+        body_text = err.read(4096).decode("utf-8", errors="replace")
+        raise RuntimeError(f"firmware upload failed: HTTP {err.code}: {body_text[:240]}") from err
+    except URLError as err:
+        raise RuntimeError(f"firmware upload failed: {err.reason}") from err
+
+
+def http_host(host: str) -> str:
+    text = str(host or "").strip()
+    if ":" in text and not text.startswith("["):
+        return f"[{text}]"
+    return text
 
 
 def save_uploaded_plant_photo(payload: dict[str, Any]) -> dict[str, Any]:

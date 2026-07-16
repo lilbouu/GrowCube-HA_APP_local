@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.81-channel-config-post";
+const GROWCUBE_CARD_VERSION = "0.2.84-firmware-update";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
 class GrowcubeCard extends HTMLElement {
@@ -21,6 +21,8 @@ class GrowcubeCard extends HTMLElement {
     this._detailMenuOpen = false;
     this._aboutDialogOpen = false;
     this._deletePlantDialogOpen = false;
+    this._resetNetworkDialogOpen = false;
+    this._firmwareUpdateDialogOpen = false;
     this._aboutProfileCache = {};
     this._aboutProfileLoading = false;
     this._addonApiUrlCache = undefined;
@@ -589,8 +591,11 @@ class GrowcubeCard extends HTMLElement {
         tank_remaining: this._mqttEntity("sensor", prefix, "tank_remaining"),
         tank_level: this._mqttEntity("sensor", prefix, "tank_level"),
         tank_days_left: this._mqttEntity("sensor", prefix, "tank_days_left"),
+        firmware_update_status: this._mqttEntity("sensor", prefix, "firmware_update_status"),
         tank_capacity: this._mqttEntity("number", prefix, "tank_capacity"),
         mark_tank_full: this._mqttEntity("button", prefix, "mark_tank_full"),
+        reset_network: this._mqttEntity("button", prefix, "reset_network"),
+        update_firmware: this._mqttEntity("button", prefix, "update_firmware"),
       },
       channels: Object.fromEntries(this._channels().map((channel) => [channel, this._mqttChannelEntities(prefix, channel)])),
     };
@@ -806,8 +811,11 @@ class GrowcubeCard extends HTMLElement {
       tank_remaining: mappedDeviceEntities.tank_remaining || this._entityBySuffix("sensor", "_tank_remaining"),
       tank_level: mappedDeviceEntities.tank_level || this._entityBySuffix("sensor", "_tank_level"),
       tank_days_left: mappedDeviceEntities.tank_days_left || this._entityBySuffix("sensor", "_tank_days_left"),
+      firmware_update_status: mappedDeviceEntities.firmware_update_status || this._entityBySuffix("sensor", "_firmware_update_status"),
       tank_capacity: mappedDeviceEntities.tank_capacity || this._entityBySuffix("number", "_tank_capacity"),
       mark_tank_full: mappedDeviceEntities.mark_tank_full || this._entityBySuffix("button", "_mark_tank_full"),
+      reset_network: mappedDeviceEntities.reset_network || this._entityBySuffix("button", "_reset_network"),
+      update_firmware: mappedDeviceEntities.update_firmware || this._entityBySuffix("button", "_update_firmware"),
     };
     return {
       ...entities,
@@ -1208,6 +1216,24 @@ class GrowcubeCard extends HTMLElement {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  }
+
+  async _resetNetworkApi() {
+    const params = new URLSearchParams();
+    const deviceId = this._apiDeviceIdHint();
+    if (deviceId) {
+      params.set("device_id", deviceId);
+    }
+    return this._fetchAddonApi(`devices/reset_network?${params.toString()}`);
+  }
+
+  async _firmwareUpdateApi() {
+    const params = new URLSearchParams();
+    const deviceId = this._apiDeviceIdHint();
+    if (deviceId) {
+      params.set("device_id", deviceId);
+    }
+    return this._fetchAddonApi(`devices/firmware/update?${params.toString()}`);
   }
 
   _entityDisplay(entityId, fallback = "Unknown") {
@@ -2488,6 +2514,22 @@ class GrowcubeCard extends HTMLElement {
     return Number(min) !== 0 || Number(max) !== 0;
   }
 
+  _rangeValueClass(value, min, max) {
+    const numericValue = Number.parseFloat(String(value).replace(",", "."));
+    const numericMin = Number(min);
+    const numericMax = Number(max);
+    if (!Number.isFinite(numericValue) || !this._hasRange(numericMin, numericMax)) {
+      return "";
+    }
+    if (Number.isFinite(numericMin) && numericMin !== 0 && numericValue < numericMin) {
+      return " out-of-range";
+    }
+    if (Number.isFinite(numericMax) && numericMax !== 0 && numericValue > numericMax) {
+      return " out-of-range";
+    }
+    return "";
+  }
+
   _render() {
     if (!this.shadowRoot || !this._config) {
       return;
@@ -3108,6 +3150,11 @@ class GrowcubeCard extends HTMLElement {
           color: var(--error-color, #db4437);
           background: color-mix(in srgb, var(--error-color, #db4437) 14%, transparent);
           border: 1px solid color-mix(in srgb, var(--error-color, #db4437) 38%, transparent);
+        }
+
+        .value.out-of-range,
+        .chart-current-stat .value.out-of-range {
+          color: var(--error-color, #db4437);
         }
 
         button.state-button {
@@ -4217,6 +4264,8 @@ class GrowcubeCard extends HTMLElement {
       ${this._customPlantsOpen ? this._customPlantsDialogTemplate() : ""}
       ${this._modeWizardOpen ? this._modeWizardDialogTemplate() : ""}
       ${this._deletePlantDialogOpen ? this._deletePlantDialogTemplate() : ""}
+      ${this._resetNetworkDialogOpen ? this._resetNetworkDialogTemplate() : ""}
+      ${this._firmwareUpdateDialogOpen ? this._firmwareUpdateDialogTemplate() : ""}
       ${this._toast ? `<div class="toast">${this._escape(this._toast)}</div>` : ""}
     `;
 
@@ -4430,6 +4479,11 @@ class GrowcubeCard extends HTMLElement {
     this._rememberPlantPhotoUrl(deviceId, channel, photoUrl);
     const name = metadata.plant_name || this._entityDisplay(entities.name, this._channelName(channel));
     const moisture = this._entityDisplay(entities.moisture, "Unknown");
+    const moistureClass = this._rangeValueClass(
+      this._entityState(entities.moisture, ""),
+      this._number(entities.smart_min_moisture, 20),
+      this._number(entities.smart_max_moisture, 60),
+    );
     const mode = this._normalizeMode(this._entityState(entities.mode, "Disabled"));
     return `
       <div class="plant-row" data-action="navigate-channel" data-channel="${this._escape(channel)}" data-device-id="${this._escape(deviceId)}" role="button" tabindex="0">
@@ -4442,7 +4496,7 @@ class GrowcubeCard extends HTMLElement {
         </div>
         <div class="plant-stats">
           <div class="label">Moisture</div>
-          <div class="value">${this._escape(moisture)}</div>
+          <div class="value${moistureClass}">${this._escape(moisture)}</div>
         </div>
       </div>
     `;
@@ -4453,6 +4507,15 @@ class GrowcubeCard extends HTMLElement {
     const deviceEntities = device?.entities || entities;
     const tankRemaining = this._entityDisplay(deviceEntities.tank_remaining, "Unknown");
     const tankDaysLeft = this._entityDisplay(deviceEntities.tank_days_left, "Unknown");
+    const profile = this._profileMetadata(entities);
+    const humidityClass = this._rangeValueClass(
+      this._entityState(deviceEntities.humidity, ""),
+      profile.airHumidityMin,
+      profile.airHumidityMax,
+    );
+    const firmwareVersion = device?.version ? `Version ${device.version}` : "Unknown";
+    const firmwareUpdateStatus = this._entityDisplay(deviceEntities.firmware_update_status, device?.firmware_update_status || "idle");
+    const firmwareUpdateBusy = String(firmwareUpdateStatus).toLowerCase() === "updating";
     return `
       <div class="card">
         <div class="header">
@@ -4469,7 +4532,7 @@ class GrowcubeCard extends HTMLElement {
           </div>
           <div class="stat" data-action="more-info" data-entity="${this._escape(deviceEntities.humidity)}" role="button" tabindex="0">
             <div class="label">Humidity</div>
-            <div class="value">${this._escape(this._entityDisplay(deviceEntities.humidity, "Unknown"))}</div>
+            <div class="value${humidityClass}">${this._escape(this._entityDisplay(deviceEntities.humidity, "Unknown"))}</div>
           </div>
           <div class="stat">
             <div class="label">Tank</div>
@@ -4479,7 +4542,17 @@ class GrowcubeCard extends HTMLElement {
             <div class="label">Days left</div>
             <div class="value">${this._escape(tankDaysLeft)}</div>
           </div>
+          <div class="stat">
+            <div class="label">Firmware</div>
+            <div class="value">${this._escape(firmwareVersion)}</div>
+          </div>
+          <div class="stat">
+            <div class="label">Update</div>
+            <div class="value">${this._escape(firmwareUpdateStatus)}</div>
+          </div>
         </div>
+        <button type="button" class="wide-button" data-action="update-firmware" ${firmwareUpdateBusy ? "disabled" : ""}>Update firmware</button>
+        <button type="button" class="wide-button danger" data-action="reset-network">Reset network</button>
       </div>
     `;
   }
@@ -4672,6 +4745,11 @@ class GrowcubeCard extends HTMLElement {
     const automaticLabel = mode === "Smart" ? "Moisture range" : "Next watering";
     const automaticValue = mode === "Smart" ? smartRange : next;
     const photoUrl = this._currentPlantPhotoUrl();
+    const moistureClass = this._rangeValueClass(
+      this._entityState(entities.moisture, ""),
+      this._number(entities.smart_min_moisture, 20),
+      this._number(entities.smart_max_moisture, 60),
+    );
     return `
       <div class="card summary" data-action="navigate">
         <div class="header">
@@ -4685,7 +4763,7 @@ class GrowcubeCard extends HTMLElement {
         <div class="stats">
           <div class="stat">
             <div class="label">Moisture</div>
-            <div class="value">${this._escape(moisture)}</div>
+            <div class="value${moistureClass}">${this._escape(moisture)}</div>
           </div>
           <div class="stat">
             <div class="label">${this._escape(automaticLabel)}</div>
@@ -4848,10 +4926,15 @@ class GrowcubeCard extends HTMLElement {
     if (!entities?.moisture) {
       return "";
     }
+    const moistureClass = this._rangeValueClass(
+      this._entityState(entities.moisture, ""),
+      this._number(entities.smart_min_moisture, 20),
+      this._number(entities.smart_max_moisture, 60),
+    );
     return `
       <div class="chart-current-stat${floating ? " floating" : ""}" data-action="more-info" data-entity="${this._escape(entities.moisture)}" role="button" tabindex="0">
         <div class="label">Moisture</div>
-        <div class="value">${this._escape(moisture)}</div>
+        <div class="value${moistureClass}">${this._escape(moisture)}</div>
       </div>
     `;
   }
@@ -5276,6 +5359,11 @@ class GrowcubeCard extends HTMLElement {
   }
 
   _emptyChannelTemplate({ entities }) {
+    const moistureClass = this._rangeValueClass(
+      this._entityState(entities.moisture, ""),
+      this._number(entities.smart_min_moisture, 20),
+      this._number(entities.smart_max_moisture, 60),
+    );
     return `
       <div class="card summary">
         <div class="header">
@@ -5288,7 +5376,7 @@ class GrowcubeCard extends HTMLElement {
         <div class="stats">
           <div class="stat">
             <div class="label">Moisture</div>
-            <div class="value">${this._escape(this._entityDisplay(entities.moisture, "Unknown"))}</div>
+            <div class="value${moistureClass}">${this._escape(this._entityDisplay(entities.moisture, "Unknown"))}</div>
           </div>
           <div class="stat">
             <div class="label">Watering</div>
@@ -6117,8 +6205,53 @@ class GrowcubeCard extends HTMLElement {
     `;
   }
 
+  _resetNetworkDialogTemplate() {
+    const device = this._deviceRecord();
+    const deviceName = device?.name || device?.device_id || "this GrowCube";
+    return `
+      <div class="dialog-backdrop" data-action="close-reset-network-dialog">
+        <div class="dialog edit-dialog" role="dialog" aria-modal="true" aria-label="Reset network">
+          <div class="dialog-title">Reset network</div>
+          <div class="subtitle">Reset Wi-Fi settings for ${this._escape(deviceName)}? The device will restart, leave this network, and must be set up again.</div>
+          <div class="dialog-actions">
+            <button type="button" class="secondary" data-action="close-reset-network-button">Cancel</button>
+            <button type="button" class="danger" data-action="confirm-reset-network">Reset</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _firmwareUpdateDialogTemplate() {
+    const device = this._deviceRecord();
+    const deviceName = device?.name || device?.device_id || "this GrowCube";
+    const version = device?.version ? `Current version: ${device.version}. ` : "";
+    return `
+      <div class="dialog-backdrop" data-action="close-firmware-update-dialog">
+        <div class="dialog edit-dialog" role="dialog" aria-modal="true" aria-label="Update firmware">
+          <div class="dialog-title">Update firmware</div>
+          <div class="subtitle">${this._escape(version)}The add-on will upload the bundled firmware image to ${this._escape(deviceName)}. Do not unplug power while the device updates and restarts.</div>
+          <div class="dialog-actions">
+            <button type="button" class="secondary" data-action="close-firmware-update-button">Cancel</button>
+            <button type="button" class="danger" data-action="confirm-firmware-update">Update</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   _closeDeletePlantDialog() {
     this._deletePlantDialogOpen = false;
+    this._render();
+  }
+
+  _closeResetNetworkDialog() {
+    this._resetNetworkDialogOpen = false;
+    this._render();
+  }
+
+  _closeFirmwareUpdateDialog() {
+    this._firmwareUpdateDialogOpen = false;
     this._render();
   }
 
@@ -6138,6 +6271,58 @@ class GrowcubeCard extends HTMLElement {
       window.dispatchEvent(new CustomEvent("location-changed"));
     } catch (error) {
       this._showError("Delete failed");
+    }
+  }
+
+  async _confirmResetNetwork() {
+    try {
+      let apiError = null;
+      try {
+        await this._resetNetworkApi();
+      } catch (error) {
+        apiError = error;
+        const resetEntity = this._entities().reset_network;
+        if (!resetEntity) {
+          throw error;
+        }
+        await this._press(resetEntity);
+      }
+      this._resetNetworkDialogOpen = false;
+      this._dashboardDevicesLoadedAt = 0;
+      this._loadDashboardDevicesIfNeeded(true);
+      this._showToast("Network reset requested");
+      if (apiError) {
+        console.warn("[GrowCube] reset network used HA entity fallback", { error: apiError?.message || String(apiError) });
+      }
+      this._render();
+    } catch (error) {
+      this._showError(error?.message || "Could not reset network");
+    }
+  }
+
+  async _confirmFirmwareUpdate() {
+    try {
+      let apiError = null;
+      try {
+        await this._firmwareUpdateApi();
+      } catch (error) {
+        apiError = error;
+        const updateEntity = this._entities().update_firmware;
+        if (!updateEntity) {
+          throw error;
+        }
+        await this._press(updateEntity);
+      }
+      this._firmwareUpdateDialogOpen = false;
+      this._dashboardDevicesLoadedAt = 0;
+      this._loadDashboardDevicesIfNeeded(true);
+      this._showToast("Firmware update uploaded");
+      if (apiError) {
+        console.warn("[GrowCube] firmware update used HA entity fallback", { error: apiError?.message || String(apiError) });
+      }
+      this._render();
+    } catch (error) {
+      this._showError(error?.message || "Could not update firmware");
     }
   }
 
@@ -6444,6 +6629,14 @@ class GrowcubeCard extends HTMLElement {
           this._press(element.dataset.entity || this._entities().mark_tank_full)
             .then(() => this._showToast("Tank marked full"))
             .catch((error) => this._showError(error?.message || "Could not update tank"));
+        } else if (action === "reset-network") {
+          event.stopPropagation();
+          this._resetNetworkDialogOpen = true;
+          this._render();
+        } else if (action === "update-firmware") {
+          event.stopPropagation();
+          this._firmwareUpdateDialogOpen = true;
+          this._render();
         } else if (action === "refresh-activity") {
           event.stopPropagation();
           this._refreshAllHistory();
@@ -6525,6 +6718,18 @@ class GrowcubeCard extends HTMLElement {
           this._closeDeletePlantDialog();
         } else if (action === "confirm-delete-plant") {
           this._confirmDeletePlant();
+        } else if (action === "close-reset-network-dialog" && event.target === element) {
+          this._closeResetNetworkDialog();
+        } else if (action === "close-reset-network-button") {
+          this._closeResetNetworkDialog();
+        } else if (action === "confirm-reset-network") {
+          this._confirmResetNetwork();
+        } else if (action === "close-firmware-update-dialog" && event.target === element) {
+          this._closeFirmwareUpdateDialog();
+        } else if (action === "close-firmware-update-button") {
+          this._closeFirmwareUpdateDialog();
+        } else if (action === "confirm-firmware-update") {
+          this._confirmFirmwareUpdate();
         } else if (action === "close-edit-dialog" && event.target === element) {
           this._closeEditDialog();
         } else if (action === "close-edit-button") {

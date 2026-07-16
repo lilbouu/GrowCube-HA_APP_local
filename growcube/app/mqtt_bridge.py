@@ -183,6 +183,24 @@ class MqttBridge:
         await self._sensor(unique_id, "tank_used", "Tank used", base, device_info, "mL", None, "{{ value_json.tank_used_ml }}", "mdi:water-minus")
         await self._sensor(
             unique_id,
+            "firmware_update_status",
+            "Firmware update status",
+            base,
+            device_info,
+            None,
+            None,
+            "{{ value_json.firmware_update_status }}",
+            "mdi:update",
+            (
+                "{"
+                "\"installed_version\":{{ value_json.version | tojson }},"
+                "\"firmware_update_error\":{{ value_json.firmware_update_error | tojson }},"
+                "\"firmware_update_started_at\":{{ value_json.firmware_update_started_at | tojson }}"
+                "}"
+            ),
+        )
+        await self._sensor(
+            unique_id,
             "tank_days_left",
             "Tank days left",
             base,
@@ -205,6 +223,8 @@ class MqttBridge:
         await self._binary(unique_id, "water_warning", "Water warning", base, device_info, "{{ 'ON' if value_json.water_warning else 'OFF' }}", "problem", "mdi:water-alert", "diagnostic")
         await self._number(unique_id, "tank_capacity", "Tank capacity", base, device_info, 500, 50000, 50, "mL", "mdi:cup-water", "{{ value_json.tank_capacity_ml }}")
         await self._button(unique_id, "mark_tank_full", "Mark tank full", base, device_info, "mark_tank_full", "mdi:cup-water")
+        await self._button(unique_id, "reset_network", "Reset network", base, device_info, "reset_network", "mdi:wifi-refresh")
+        await self._button(unique_id, "update_firmware", "Update firmware", base, device_info, "update_firmware", "mdi:update")
 
         for channel in range(4):
             channel_id = "abcd"[channel]

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.84
+
+- Add local firmware OTA upload for GrowCube devices using the bundled firmware image.
+- Add Home Assistant and Web UI controls for firmware update status and update start.
+- Add device reset network controls and firmware version display.
+- Highlight moisture and humidity values that are outside the configured plant range.
+
 ## 0.2.82
 
 - Clear the HA channel plant profile and cached plant history when GrowCube reports `plant_id=0` after deletion from Android.
