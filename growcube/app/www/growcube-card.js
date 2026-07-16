@@ -3028,6 +3028,10 @@ class GrowcubeCard extends HTMLElement {
           min-width: 0;
         }
 
+        .stat.next-watering {
+          grid-column: 1;
+        }
+
         .stat[data-action="more-info"],
         .stat[data-action^="edit-"],
         .stat[data-action="toggle-smart-daytime"] {
@@ -3276,6 +3280,43 @@ class GrowcubeCard extends HTMLElement {
 
         .plant-titlebar .title:hover {
           color: var(--primary-color);
+        }
+
+        .editable-title-row {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          max-width: 100%;
+          min-width: 0;
+        }
+
+        .editable-title-row .title {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .title-edit-button {
+          width: 30px;
+          height: 30px;
+          min-width: 30px;
+          border: 0;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+          background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+          color: var(--secondary-text-color);
+          cursor: pointer;
+        }
+
+        .title-edit-button:hover {
+          color: var(--primary-text-color);
+          background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+        }
+
+        .title-edit-button ha-icon {
+          --mdc-icon-size: 16px;
         }
 
         .plant-menu-anchor {
@@ -4787,6 +4828,12 @@ class GrowcubeCard extends HTMLElement {
     const secondaryValue = data.mode === "Smart"
       ? (data.smartDaytimeWatering ? "On" : "Off")
       : `${data.scheduleDuration} mL / ${Math.max(1, Math.round(data.interval / 24))}d`;
+    const nextWateringStat = data.mode === "Repeating" ? `
+              <div class="stat next-watering" data-action="edit-first-watering" role="button" tabindex="0">
+                <div class="label">Next watering</div>
+                <div class="value">${this._escape(data.next)}</div>
+              </div>
+    ` : "";
     const photoUrl = this._currentPlantPhotoUrl();
     return `
       <div class="card detail detail-flat">
@@ -4797,7 +4844,12 @@ class GrowcubeCard extends HTMLElement {
                 ${photoUrl ? `<img src="${this._escape(photoUrl)}" alt="" referrerpolicy="no-referrer">` : '<ha-icon icon="mdi:flower"></ha-icon>'}
               </div>
               <div>
-                <div class="title" data-action="edit-plant-name" role="button" tabindex="0">${this._escape(this._plantName())}</div>
+                <div class="editable-title-row">
+                  <div class="title" data-action="edit-plant-name" role="button" tabindex="0">${this._escape(this._plantName())}</div>
+                  <button type="button" class="title-edit-button" data-action="edit-plant-name" aria-label="Rename plant" title="Rename plant">
+                    <ha-icon icon="mdi:pencil"></ha-icon>
+                  </button>
+                </div>
                 <div class="channel-pill"><ha-icon icon="mdi:checkbox-blank-circle-outline"></ha-icon><span>${this._escape(this._config.channel || this._channelLabel())}</span></div>
               </div>
               <div class="plant-menu-anchor">
@@ -4829,6 +4881,7 @@ class GrowcubeCard extends HTMLElement {
                 <div class="label">Manual amount</div>
                 <div class="value">${this._escape(data.manualDuration)} mL</div>
               </div>
+              ${nextWateringStat}
             </div>
             ${this._problemBannerTemplate(data.problems)}
           </div>
@@ -4889,7 +4942,12 @@ class GrowcubeCard extends HTMLElement {
                   ${photoUrl ? `<img src="${this._escape(photoUrl)}" alt="" referrerpolicy="no-referrer">` : '<ha-icon icon="mdi:flower"></ha-icon>'}
                 </div>
                 <div>
-                  <div class="title">${this._escape(this._plantName())}</div>
+                  <div class="editable-title-row">
+                    <div class="title" data-action="edit-plant-name" role="button" tabindex="0">${this._escape(this._plantName())}</div>
+                    <button type="button" class="title-edit-button" data-action="edit-plant-name" aria-label="Rename plant" title="Rename plant">
+                      <ha-icon icon="mdi:pencil"></ha-icon>
+                    </button>
+                  </div>
                   <div class="subtitle">${this._escape(category)}</div>
                 </div>
               </div>
@@ -4973,17 +5031,7 @@ class GrowcubeCard extends HTMLElement {
     const wateringEvents = this._detailWateringEvents(entities);
     const windowEnd = Date.now();
     const windowStart = windowEnd - historyHours * 60 * 60 * 1000;
-    if (historyState?.attributes?.history_loading) {
-      return `
-        <div class="chart-panel">
-          ${this._detailChartHeaderTemplate(historyHours, entities, moisture, false)}
-          <div class="chart-visual chart-placeholder">
-            ${this._detailChartMetricTemplate(entities, moisture, true)}
-            <div class="chart-empty">Loading history...</div>
-          </div>
-        </div>
-      `;
-    }
+    const historyLoading = Boolean(historyState?.attributes?.history_loading);
     const usingFallbackHistory = !visibleHistoryPoints.length;
     const graphSourcePoints = usingFallbackHistory
       ? this._fallbackMoistureHistoryPoints(entities, windowEnd)
@@ -4994,7 +5042,7 @@ class GrowcubeCard extends HTMLElement {
           ${this._detailChartHeaderTemplate(historyHours, entities, moisture, false)}
           <div class="chart-visual chart-placeholder">
             ${this._detailChartMetricTemplate(entities, moisture, true)}
-            <div class="chart-empty">${this._historyEmptyText(historyState, historyHours)}</div>
+            <div class="chart-empty">${historyLoading ? "Loading history..." : this._historyEmptyText(historyState, historyHours)}</div>
           </div>
         </div>
       `;

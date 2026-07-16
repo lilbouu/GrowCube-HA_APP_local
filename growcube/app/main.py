@@ -2181,6 +2181,31 @@ def web_ui_html() -> str:
       margin-bottom: 14px;
     }
     .modal-header h2 { margin: 0; }
+    .modal-title-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .modal-title-row h2 { overflow-wrap: anywhere; }
+    .round-edit {
+      display: inline-flex;
+      width: 28px;
+      height: 28px;
+      min-width: 28px;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 50%;
+      padding: 0;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      color: var(--muted);
+    }
+    .round-edit:hover {
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      color: var(--text);
+    }
+    .round-edit svg { width: 15px; height: 15px; }
     .modal-body { display: grid; gap: 14px; }
     .settings-grid {
       display: grid;
@@ -2192,6 +2217,7 @@ def web_ui_html() -> str:
       border-radius: 8px;
       padding: 10px;
     }
+    .settings-stat:only-child { grid-column: 1 / -1; }
     .settings-stat .label {
       color: var(--muted);
       font-size: 12px;
@@ -2307,9 +2333,9 @@ def web_ui_html() -> str:
     </section>
 
     <section>
-      <h2>Discover</h2>
+      <h2>Discover GrowCube</h2>
       <div class="row discover-actions">
-        <button id="discoverBtn">Search network</button>
+        <button id="discoverBtn">Automatic search</button>
         <button class="secondary" id="networkOptionsBtn" type="button" aria-expanded="false" aria-controls="networkOptionsRow">Network</button>
       </div>
       <div class="row network-row hidden" id="networkOptionsRow">
@@ -2555,9 +2581,7 @@ function renderDevices(payload) {
       </div>
     `;
   }).join("");
-  if (document.activeElement?.id !== "deviceNameInput") {
-    renderDeviceSettingsModal();
-  }
+  renderDeviceSettingsModal();
 }
 
 async function refreshDevices() {
@@ -2632,15 +2656,17 @@ function renderDeviceSettingsModal() {
   const updateAvailable = deviceSettingsUpdateAvailable && deviceSettingsLatestVersion;
   const confirmingUpdate = deviceSettingsConfirm === "update_firmware";
   const confirmingReset = deviceSettingsConfirm === "reset_network";
-  const currentName = document.activeElement?.id === "deviceNameInput"
-    ? document.activeElement.value
-    : (device.name || "GrowCube");
   modal.classList.remove("hidden");
   modal.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-label="Device settings">
       <div class="modal-header">
         <div>
-          <h2>${escapeHtml(device.name || "GrowCube")}</h2>
+          <div class="modal-title-row">
+            <h2>${escapeHtml(device.name || "GrowCube")}</h2>
+            <button class="round-edit" type="button" data-rename-device="${escapeHtml(device.device_id)}" aria-label="Rename GrowCube" title="Rename GrowCube" ${busy ? "disabled" : ""}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4.2L18.7 9.5a2.1 2.1 0 0 0 0-3L17.5 5.3a2.1 2.1 0 0 0-3 0L4 15.8V20Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path><path d="m13.6 6.2 4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg>
+            </button>
+          </div>
           <div class="meta">${escapeHtml(device.host)}</div>
         </div>
         <button class="icon-control" type="button" data-close-device-settings aria-label="Close">
@@ -2663,10 +2689,6 @@ function renderDeviceSettingsModal() {
           </div>
         ` : `
         <div class="settings-grid">
-          <label class="settings-stat">
-            <div class="label">Name</div>
-            <input id="deviceNameInput" value="${escapeHtml(currentName)}" maxlength="64" ${busy ? "disabled" : ""}>
-          </label>
           <div class="settings-stat">
             <div class="label">Current firmware version</div>
             <div class="value">${escapeHtml(device.version || "Unknown")}</div>
@@ -2741,22 +2763,17 @@ function askUpdateFirmware(deviceId) {
   renderDeviceSettingsModal();
 }
 
-async function saveDeviceName(deviceId, options = {}) {
+async function renameDevice(deviceId) {
   const device = findDevice(deviceId);
   if (!device) return;
-  const quiet = Boolean(options.quiet);
-  const input = document.getElementById("deviceNameInput");
-  const name = String(input?.value || "").trim();
+  const name = String(window.prompt("GrowCube name", device.name || "GrowCube") || "").trim();
   if (!name) {
-    setDeviceSettingsStatus("Name is required.", "error", "");
     return;
   }
   if (name === (device.name || "GrowCube")) {
     return;
   }
-  if (!quiet) {
-    setDeviceSettingsStatus("Saving device name...", "", "saving");
-  }
+  setDeviceSettingsStatus("Saving device name...", "", "saving");
   try {
     const params = new URLSearchParams({device_id: deviceId, name});
     await fetchJson("devices/rename?" + params.toString());
@@ -2815,7 +2832,7 @@ async function discoverDevices() {
         </div>
         <button data-add="${escapeHtml(device.host)}" data-name="${escapeHtml(device.name || "GrowCube")}">Add</button>
       </div>
-    `).join("") || '<div class="empty">Try entering the network manually, for example 192.168.1.0/24.</div>';
+    `).join("") || '<div class="empty">If the cube is open in the GrowCube mobile app or another controller, close that app first so it releases the TCP connection, then run automatic search again. You can also enter the network manually, for example 192.168.1.0/24.</div>';
   } catch (err) {
     statusEl.innerHTML = '<span class="error">' + escapeHtml(err.message) + '</span>';
   } finally {
@@ -2864,10 +2881,11 @@ window.addEventListener("popstate", () => {
   updateDashboardCard();
 });
 document.addEventListener("click", async (event) => {
-  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-check-firmware],[data-update-firmware],[data-confirm-update-firmware],[data-reset-network],[data-confirm-reset-network],[data-cancel-device-confirm],[data-close-device-settings]");
+  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-rename-device],[data-check-firmware],[data-update-firmware],[data-confirm-update-firmware],[data-reset-network],[data-confirm-reset-network],[data-cancel-device-confirm],[data-close-device-settings]");
   const addHost = actionTarget?.dataset?.add;
   const removeId = actionTarget?.dataset?.remove;
   const settingsId = actionTarget?.dataset?.deviceSettings;
+  const renameId = actionTarget?.dataset?.renameDevice;
   const checkId = actionTarget?.dataset?.checkFirmware;
   const updateId = actionTarget?.dataset?.updateFirmware;
   const confirmUpdateId = actionTarget?.dataset?.confirmUpdateFirmware;
@@ -2883,6 +2901,7 @@ document.addEventListener("click", async (event) => {
   }
   if (addHost) await addDevice(addHost, actionTarget.dataset.name || addHost);
   if (settingsId) openDeviceSettings(settingsId);
+  if (renameId) await renameDevice(renameId);
   if (checkId) await checkFirmware(checkId);
   if (updateId) askUpdateFirmware(updateId);
   if (confirmUpdateId) await updateFirmware(confirmUpdateId);
@@ -2897,21 +2916,6 @@ document.addEventListener("change", (event) => {
   }
   deviceSettingsUpdateAcknowledged = Boolean(event.target.checked);
   renderDeviceSettingsModal();
-});
-
-document.addEventListener("focusout", async (event) => {
-  if (event.target?.id !== "deviceNameInput" || !deviceSettingsId) {
-    return;
-  }
-  await saveDeviceName(deviceSettingsId, {quiet: true});
-});
-
-document.addEventListener("keydown", async (event) => {
-  if (event.key !== "Enter" || event.target?.id !== "deviceNameInput" || !deviceSettingsId) {
-    return;
-  }
-  event.preventDefault();
-  event.target.blur();
 });
 
 refreshDashboard(true).catch((err) => {
