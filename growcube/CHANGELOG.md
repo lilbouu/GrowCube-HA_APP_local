@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.85
+
+- Look for the local firmware image in persistent add-on data at `/data/firmware/growcube-local.bin` before falling back to a bundled image.
+
 ## 0.2.84
 
 - Add local firmware OTA upload for GrowCube devices using the bundled firmware image.

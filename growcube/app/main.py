@@ -61,7 +61,8 @@ OPTIONS_PATH = DATA_DIR / "options.json"
 APP_DIR = Path(__file__).parent
 CARD_SOURCE_PATH = APP_DIR / "www" / "growcube-card.js"
 CARD_IMAGE_SOURCE_DIR = APP_DIR / "www" / "images"
-FIRMWARE_IMAGE_PATH = APP_DIR / "firmware" / "growcube-local.bin"
+FIRMWARE_DATA_IMAGE_PATH = DATA_DIR / "firmware" / "growcube-local.bin"
+FIRMWARE_BUNDLED_IMAGE_PATH = APP_DIR / "firmware" / "growcube-local.bin"
 PLANT_PHOTO_DIR = DATA_DIR / "plant_photos"
 CARD_API_URL_PLACEHOLDER = "__GROWCUBE_ADDON_API_URL__"
 DEFAULT_INGRESS_PORT = 8099
@@ -266,6 +267,7 @@ class GrowCubeManager:
 
     def load(self) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
+        FIRMWARE_DATA_IMAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
         stored = self._read_json(STATE_PATH, {})
         options = self._read_json(OPTIONS_PATH, {})
 
@@ -626,7 +628,7 @@ class GrowCubeManager:
         runtime = self.runtimes.get(device_id)
         if runtime is None or runtime.client is None or not runtime.client.connected:
             raise RuntimeError("device is not connected")
-        firmware = validate_firmware_image(FIRMWARE_IMAGE_PATH)
+        firmware = firmware_image_path()
         async with self.async_lock:
             state.firmware_update_status = "updating"
             state.firmware_update_error = ""
@@ -3274,6 +3276,16 @@ def validate_firmware_image(path: Path) -> Path:
     if size > FIRMWARE_MAX_BYTES:
         raise RuntimeError(f"firmware image is too large: {size} bytes")
     return path
+
+
+def firmware_image_path() -> Path:
+    if FIRMWARE_DATA_IMAGE_PATH.is_file():
+        return validate_firmware_image(FIRMWARE_DATA_IMAGE_PATH)
+    if FIRMWARE_BUNDLED_IMAGE_PATH.is_file():
+        return validate_firmware_image(FIRMWARE_BUNDLED_IMAGE_PATH)
+    raise RuntimeError(
+        "firmware image not found. Put growcube-local.bin into /data/firmware/growcube-local.bin"
+    )
 
 
 def upload_firmware_image(host: str, path: Path) -> dict[str, Any]:
