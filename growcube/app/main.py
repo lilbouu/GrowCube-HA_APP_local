@@ -2329,6 +2329,8 @@ let deviceSettingsId = "";
 let deviceSettingsBusy = "";
 let deviceSettingsMessage = "";
 let deviceSettingsTone = "";
+let deviceSettingsUpdateAvailable = false;
+let deviceSettingsLatestVersion = "";
 
 function iconSvg(icon) {
   const common = 'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
@@ -2546,10 +2548,13 @@ function findDevice(deviceId) {
 
 function openDeviceSettings(deviceId) {
   deviceSettingsId = deviceId;
-  deviceSettingsBusy = "";
-  deviceSettingsMessage = "";
+  deviceSettingsBusy = "checking";
+  deviceSettingsMessage = "Checking firmware version...";
   deviceSettingsTone = "";
+  deviceSettingsUpdateAvailable = false;
+  deviceSettingsLatestVersion = "";
   renderDeviceSettingsModal();
+  checkFirmware(deviceId);
 }
 
 function closeDeviceSettings() {
@@ -2557,6 +2562,8 @@ function closeDeviceSettings() {
   deviceSettingsBusy = "";
   deviceSettingsMessage = "";
   deviceSettingsTone = "";
+  deviceSettingsUpdateAvailable = false;
+  deviceSettingsLatestVersion = "";
   renderDeviceSettingsModal();
 }
 
@@ -2581,6 +2588,7 @@ function renderDeviceSettingsModal() {
   const busy = Boolean(deviceSettingsBusy) || updateStatus === "updating";
   const message = deviceSettingsMessage || (updateError ? updateError : "");
   const messageClass = deviceSettingsTone === "error" || updateError ? "error" : "meta";
+  const updateAvailable = deviceSettingsUpdateAvailable && deviceSettingsLatestVersion;
   modal.classList.remove("hidden");
   modal.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-label="Device settings">
@@ -2603,26 +2611,25 @@ function renderDeviceSettingsModal() {
             <div class="label">Firmware</div>
             <div class="value">${escapeHtml(device.version || "Unknown")}</div>
           </div>
-          <div class="settings-stat">
-            <div class="label">Update status</div>
-            <div class="value">${escapeHtml(updateStatus)}</div>
-          </div>
-          <div class="settings-stat">
-            <div class="label">Available update</div>
-            <div class="value">Latest installed</div>
-          </div>
+          ${updateAvailable ? `
+            <div class="settings-stat">
+              <div class="label">Available firmware</div>
+              <div class="value">${escapeHtml(deviceSettingsLatestVersion)}</div>
+            </div>
+          ` : ""}
         </div>
-        <div class="warning-box">
-          Do not unplug GrowCube, turn off power, restart Home Assistant, or disconnect the network during firmware update. The device will restart automatically after the update.
-        </div>
+        ${updateAvailable || updateStatus === "updating" ? `
+          <div class="warning-box">
+            Do not power off GrowCube during the update process. Interrupting the update may make the device unavailable.
+          </div>
+        ` : ""}
         <div class="modal-actions">
-          <button class="secondary" data-check-firmware="${escapeHtml(device.device_id)}" ${busy ? "disabled" : ""}>Check update</button>
-          <button data-update-firmware="${escapeHtml(device.device_id)}" ${busy || !device.connected ? "disabled" : ""}>Update firmware</button>
+          ${updateAvailable ? `<button data-update-firmware="${escapeHtml(device.device_id)}" ${busy || !device.connected ? "disabled" : ""}>Update firmware</button>` : ""}
           <button class="danger" data-reset-network="${escapeHtml(device.device_id)}" ${busy || !device.connected ? "disabled" : ""}>Reset network</button>
         </div>
         <div class="modal-status">
           ${busy ? '<span class="spinner"></span>' : ""}
-          <span class="${messageClass}">${escapeHtml(message || (busy ? "Working..." : "Ready"))}</span>
+          <span class="${messageClass}">${escapeHtml(message || (busy ? "Working..." : "Your GrowCube is up to date."))}</span>
         </div>
       </div>
     </div>
@@ -2631,9 +2638,14 @@ function renderDeviceSettingsModal() {
 
 async function checkFirmware(deviceId) {
   if (!findDevice(deviceId)) return;
+  deviceSettingsUpdateAvailable = false;
+  deviceSettingsLatestVersion = "";
   setDeviceSettingsStatus("Checking firmware version...", "", "checking");
   await new Promise((resolve) => setTimeout(resolve, 450));
-  setDeviceSettingsStatus("You are using the latest firmware.", "ok", "");
+  if (deviceSettingsId !== deviceId) return;
+  deviceSettingsUpdateAvailable = false;
+  deviceSettingsLatestVersion = "";
+  setDeviceSettingsStatus("Your GrowCube is up to date.", "ok", "");
 }
 
 async function updateFirmware(deviceId) {
@@ -2738,11 +2750,10 @@ window.addEventListener("popstate", () => {
   updateDashboardCard();
 });
 document.addEventListener("click", async (event) => {
-  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-check-firmware],[data-update-firmware],[data-reset-network],[data-close-device-settings]");
+  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-update-firmware],[data-reset-network],[data-close-device-settings]");
   const addHost = actionTarget?.dataset?.add;
   const removeId = actionTarget?.dataset?.remove;
   const settingsId = actionTarget?.dataset?.deviceSettings;
-  const checkId = actionTarget?.dataset?.checkFirmware;
   const updateId = actionTarget?.dataset?.updateFirmware;
   const resetId = actionTarget?.dataset?.resetNetwork;
   if (actionTarget?.dataset?.closeDeviceSettings !== undefined || event.target?.id === "deviceSettingsModal") {
@@ -2751,7 +2762,6 @@ document.addEventListener("click", async (event) => {
   }
   if (addHost) await addDevice(addHost, actionTarget.dataset.name || addHost);
   if (settingsId) openDeviceSettings(settingsId);
-  if (checkId) await checkFirmware(checkId);
   if (updateId) await updateFirmware(updateId);
   if (resetId) await resetNetwork(resetId);
   if (removeId) await removeDevice(removeId);
