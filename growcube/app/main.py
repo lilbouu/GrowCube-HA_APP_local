@@ -2352,6 +2352,7 @@ let deviceSettingsTone = "";
 let deviceSettingsUpdateAvailable = false;
 let deviceSettingsLatestVersion = "";
 let deviceSettingsConfirm = "";
+let deviceSettingsUpdateAcknowledged = false;
 const LOCAL_FIRMWARE_LABEL = "local firmware";
 
 function iconSvg(icon) {
@@ -2542,7 +2543,9 @@ function renderDevices(payload) {
       </div>
     `;
   }).join("");
-  renderDeviceSettingsModal();
+  if (document.activeElement?.id !== "deviceNameInput") {
+    renderDeviceSettingsModal();
+  }
 }
 
 async function refreshDevices() {
@@ -2576,6 +2579,7 @@ function openDeviceSettings(deviceId) {
   deviceSettingsUpdateAvailable = false;
   deviceSettingsLatestVersion = "";
   deviceSettingsConfirm = "";
+  deviceSettingsUpdateAcknowledged = false;
   renderDeviceSettingsModal();
   checkFirmware(deviceId);
 }
@@ -2588,6 +2592,7 @@ function closeDeviceSettings() {
   deviceSettingsUpdateAvailable = false;
   deviceSettingsLatestVersion = "";
   deviceSettingsConfirm = "";
+  deviceSettingsUpdateAcknowledged = false;
   renderDeviceSettingsModal();
 }
 
@@ -2615,6 +2620,9 @@ function renderDeviceSettingsModal() {
   const updateAvailable = deviceSettingsUpdateAvailable && deviceSettingsLatestVersion;
   const confirmingUpdate = deviceSettingsConfirm === "update_firmware";
   const confirmingReset = deviceSettingsConfirm === "reset_network";
+  const currentName = document.activeElement?.id === "deviceNameInput"
+    ? document.activeElement.value
+    : (device.name || "GrowCube");
   modal.classList.remove("hidden");
   modal.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-label="Device settings">
@@ -2628,40 +2636,33 @@ function renderDeviceSettingsModal() {
         </button>
       </div>
       <div class="modal-body">
+        ${confirmingUpdate ? `
+          <div class="warning-box">
+            <div class="title">Update firmware</div>
+            <p>Do not power off GrowCube during the update process. Interrupting the update may make the device unavailable.</p>
+            <label class="row" style="margin-top:12px">
+              <input type="checkbox" data-update-ack ${deviceSettingsUpdateAcknowledged ? "checked" : ""} style="min-width:auto; flex:0 0 auto">
+              <span>I understand that GrowCube must stay powered on during the update.</span>
+            </label>
+            <div class="modal-actions" style="margin-top:14px">
+              <button class="secondary" data-cancel-device-confirm>Cancel</button>
+              <button class="danger" data-confirm-update-firmware="${escapeHtml(device.device_id)}" ${deviceSettingsUpdateAcknowledged ? "" : "disabled"}>Update firmware</button>
+            </div>
+          </div>
+        ` : `
         <label class="field">
           <div class="label">Name</div>
           <div class="row">
-            <input id="deviceNameInput" value="${escapeHtml(device.name || "GrowCube")}" maxlength="64" ${busy ? "disabled" : ""}>
+            <input id="deviceNameInput" value="${escapeHtml(currentName)}" maxlength="64" ${busy ? "disabled" : ""}>
             <button class="secondary" data-save-device-name="${escapeHtml(device.device_id)}" ${busy ? "disabled" : ""}>Save</button>
           </div>
         </label>
         <div class="settings-grid">
           <div class="settings-stat">
-            <div class="label">Connection</div>
-            <div class="value"><span class="dot ${status.cls}"></span> ${escapeHtml(status.text)}</div>
-          </div>
-          <div class="settings-stat">
             <div class="label">Current firmware version</div>
             <div class="value">${escapeHtml(device.version || "Unknown")}</div>
           </div>
-          ${updateAvailable ? `
-            <div class="settings-stat">
-              <div class="label">Available firmware</div>
-              <div class="value">${escapeHtml(deviceSettingsLatestVersion)}</div>
-            </div>
-          ` : ""}
         </div>
-        ${updateAvailable || updateStatus === "updating" || confirmingUpdate ? `
-          <div class="warning-box">
-            Do not power off GrowCube during the update process. Interrupting the update may make the device unavailable.
-            ${confirmingUpdate ? `
-              <div class="modal-actions" style="margin-top:10px">
-                <button class="secondary" data-cancel-device-confirm>Cancel</button>
-                <button class="danger" data-confirm-update-firmware="${escapeHtml(device.device_id)}">Update firmware</button>
-              </div>
-            ` : ""}
-          </div>
-        ` : ""}
         <div class="modal-actions">
           <button class="secondary" data-check-firmware="${escapeHtml(device.device_id)}" ${busy ? "disabled" : ""}>Check for updates</button>
           ${updateAvailable ? `<button data-update-firmware="${escapeHtml(device.device_id)}" ${busy || !device.connected || confirmingUpdate ? "disabled" : ""}>Update firmware</button>` : ""}
@@ -2680,6 +2681,7 @@ function renderDeviceSettingsModal() {
           ${busy ? '<span class="spinner"></span>' : ""}
           <span class="${messageClass}">${escapeHtml(message || (busy ? "Working..." : "Your GrowCube is up to date."))}</span>
         </div>
+        `}
       </div>
     </div>
   `;
@@ -2700,7 +2702,13 @@ async function checkFirmware(deviceId) {
 async function updateFirmware(deviceId) {
   const device = findDevice(deviceId);
   if (!device) return;
+  if (!deviceSettingsUpdateAcknowledged) {
+    setDeviceSettingsStatus("Please confirm that you have read the warning.", "error", "");
+    deviceSettingsConfirm = "update_firmware";
+    return;
+  }
   deviceSettingsConfirm = "";
+  deviceSettingsUpdateAcknowledged = false;
   setDeviceSettingsStatus("Downloading firmware...", "", "downloading");
   await new Promise((resolve) => setTimeout(resolve, 700));
   if (deviceSettingsId !== deviceId) return;
@@ -2718,6 +2726,7 @@ async function updateFirmware(deviceId) {
 function askUpdateFirmware(deviceId) {
   if (!findDevice(deviceId)) return;
   deviceSettingsConfirm = "update_firmware";
+  deviceSettingsUpdateAcknowledged = false;
   deviceSettingsMessage = "";
   deviceSettingsTone = "";
   renderDeviceSettingsModal();
@@ -2753,6 +2762,7 @@ function askResetNetwork(deviceId) {
 
 function cancelDeviceConfirm() {
   deviceSettingsConfirm = "";
+  deviceSettingsUpdateAcknowledged = false;
   renderDeviceSettingsModal();
 }
 
@@ -2866,6 +2876,14 @@ document.addEventListener("click", async (event) => {
   if (resetId) askResetNetwork(resetId);
   if (confirmResetId) await resetNetwork(confirmResetId);
   if (removeId) await removeDevice(removeId);
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target?.dataset?.updateAck === undefined) {
+    return;
+  }
+  deviceSettingsUpdateAcknowledged = Boolean(event.target.checked);
+  renderDeviceSettingsModal();
 });
 
 document.addEventListener("keydown", async (event) => {
