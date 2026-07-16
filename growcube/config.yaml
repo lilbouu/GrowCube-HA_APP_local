@@ -26,18 +26,12 @@ options:
   mqtt_port: 1883
   mqtt_username: ""
   mqtt_password: ""
-  ntp_servers:
-    - ntp.aliyun.com
-    - ntp.tencent.com
-    - pool.ntp.org
   devices: []
 schema:
   mqtt_host: str
   mqtt_port: int
   mqtt_username: str?
   mqtt_password: password?
-  ntp_servers:
-    - str
   devices:
     - name: str
       host: str

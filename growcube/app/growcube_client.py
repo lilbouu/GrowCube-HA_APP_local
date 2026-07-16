@@ -20,7 +20,7 @@ from growcube_protocol import (
 
 GROWCUBE_PORT = 8800
 TIME_SYNC_DELAYS_SECONDS = (15, 60, 180)
-DEFAULT_TIME_SYNC_NTP_SERVERS = (
+TIME_SYNC_NTP_SERVERS = (
     "ntp.aliyun.com",
     "ntp.tencent.com",
     "pool.ntp.org",
@@ -186,7 +186,6 @@ class GrowCubeClient:
         on_connected: ConnectionCallback | None = None,
         on_disconnected: ConnectionCallback | None = None,
         time_provider: TimeProvider | None = None,
-        ntp_servers: tuple[str, ...] = DEFAULT_TIME_SYNC_NTP_SERVERS,
     ) -> None:
         self.host = host
         self.port = port
@@ -194,7 +193,6 @@ class GrowCubeClient:
         self.on_connected = on_connected
         self.on_disconnected = on_disconnected
         self.time_provider = time_provider or datetime.now
-        self.ntp_servers = ntp_servers
         self.connected = False
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -276,7 +274,7 @@ class GrowCubeClient:
 
     async def sync_time(self) -> None:
         value = await self._sync_time_value()
-        await self.send(Command(57, time_config_payload(value, self.ntp_servers)))
+        await self.send(Command(57, time_config_payload(value, TIME_SYNC_NTP_SERVERS)))
         await self.send(Command(44, time_sync_payload(value)))
 
     def _schedule_time_syncs(self) -> None:
