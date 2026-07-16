@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.94
+
+- Send GrowCube timezone offset and China-friendly NTP servers with the new `elea57` time config command before the legacy RTC sync.
+- Add configurable firmware NTP servers through the Home Assistant add-on options.
+
 ## 0.2.93
 
 - Sync GrowCube RTC from external network time on TCP connect so HAOS/VM sleep clock drift does not send stale time to the device.

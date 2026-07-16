@@ -92,6 +92,13 @@ def time_sync_payload(value: datetime) -> str:
     return value.strftime("%Y@%m@%d@%H@%M@%S")
 
 
+def time_config_payload(value: datetime, ntp_servers: tuple[str, ...] = ()) -> str:
+    offset = value.utcoffset()
+    offset_minutes = int(offset.total_seconds() // 60) if offset is not None else 0
+    servers = ",".join(server.strip() for server in ntp_servers if server.strip())
+    return f"{offset_minutes}@{servers}" if servers else str(offset_minutes)
+
+
 def growcube_local_epoch(value: datetime) -> int:
     if value.tzinfo is None:
         local_value = value

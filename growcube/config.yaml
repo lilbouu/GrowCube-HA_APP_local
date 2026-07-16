@@ -1,5 +1,5 @@
 name: GrowCube
-version: "0.2.93"
+version: "0.2.94"
 slug: growcube
 description: GrowCube device bridge for Home Assistant OS
 url: https://github.com/lilbouu/GrowCube_Ha_App
@@ -26,12 +26,18 @@ options:
   mqtt_port: 1883
   mqtt_username: ""
   mqtt_password: ""
+  ntp_servers:
+    - ntp.aliyun.com
+    - ntp.tencent.com
+    - pool.ntp.org
   devices: []
 schema:
   mqtt_host: str
   mqtt_port: int
   mqtt_username: str?
   mqtt_password: password?
+  ntp_servers:
+    - str
   devices:
     - name: str
       host: str

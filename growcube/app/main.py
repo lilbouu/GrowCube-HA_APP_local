@@ -117,6 +117,11 @@ NETWORK_TIME_URLS = (
     "http://worldtimeapi.org/api/timezone/Etc/UTC",
 )
 NETWORK_TIME_TIMEOUT_SECONDS = 5
+DEFAULT_NTP_SERVERS = (
+    "ntp.aliyun.com",
+    "ntp.tencent.com",
+    "pool.ntp.org",
+)
 
 
 @dataclass(slots=True)
@@ -221,6 +226,7 @@ class DeviceRuntime:
                 on_connected=lambda: self.manager.handle_connected(self.state.id),
                 on_disconnected=lambda: self.manager.handle_disconnected(self.state.id),
                 time_provider=self.manager.current_time_for_device_sync,
+                ntp_servers=self.manager.ntp_servers,
             )
             self.client = client
             ok, error = await client.connect()
@@ -277,6 +283,7 @@ class GrowCubeManager:
         self.history_retry_task: asyncio.Task | None = None
         self.notification_signatures: dict[str, tuple[str, ...]] = {}
         self.homeassistant_time_zone: str | None = None
+        self.ntp_servers: tuple[str, ...] = DEFAULT_NTP_SERVERS
         self.loop: asyncio.AbstractEventLoop | None = None
         self.mqtt_bridge: MqttBridge | None = None
 
@@ -285,11 +292,13 @@ class GrowCubeManager:
         FIRMWARE_DATA_IMAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
         stored = self._read_json(STATE_PATH, {})
         options = self._read_json(OPTIONS_PATH, {})
+        self.ntp_servers = self._option_ntp_servers(options)
         self.homeassistant_time_zone = homeassistant_time_zone()
         if self.homeassistant_time_zone:
             LOGGER.info("Using Home Assistant time zone for GrowCube sync: %s", self.homeassistant_time_zone)
         else:
             LOGGER.info("Using add-on local time zone for GrowCube sync: %s", local_timezone())
+        LOGGER.info("Using GrowCube firmware NTP servers: %s", ", ".join(self.ntp_servers))
 
         stored_devices: list[dict[str, Any]] = []
         if isinstance(stored.get("devices"), list):
@@ -370,6 +379,26 @@ class GrowCubeManager:
             except ZoneInfoNotFoundError:
                 LOGGER.warning("Home Assistant time zone is not available in add-on: %s", self.homeassistant_time_zone)
         return local_timezone()
+
+    @staticmethod
+    def _option_ntp_servers(options: dict[str, Any]) -> tuple[str, ...]:
+        raw_servers = options.get("ntp_servers")
+        if not isinstance(raw_servers, list):
+            return DEFAULT_NTP_SERVERS
+
+        servers: list[str] = []
+        for item in raw_servers:
+            server = str(item or "").strip()
+            if not server or len(server) >= 64:
+                continue
+            if not re.fullmatch(r"[A-Za-z0-9.-]+", server):
+                LOGGER.warning("Ignoring invalid GrowCube NTP server name: %r", server)
+                continue
+            servers.append(server)
+            if len(servers) >= 3:
+                break
+
+        return tuple(servers) if servers else DEFAULT_NTP_SERVERS
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:

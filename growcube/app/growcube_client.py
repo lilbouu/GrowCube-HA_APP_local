@@ -14,11 +14,17 @@ from growcube_protocol import (
     channel_payload,
     manual_watering_payload,
     parse_messages,
+    time_config_payload,
     time_sync_payload,
 )
 
 GROWCUBE_PORT = 8800
 TIME_SYNC_DELAYS_SECONDS = (15, 60, 180)
+DEFAULT_TIME_SYNC_NTP_SERVERS = (
+    "ntp.aliyun.com",
+    "ntp.tencent.com",
+    "pool.ntp.org",
+)
 LOGGER = logging.getLogger("growcube-addon.client")
 WATERING_SOURCE_BY_CODE = {
     1: "smart",
@@ -180,6 +186,7 @@ class GrowCubeClient:
         on_connected: ConnectionCallback | None = None,
         on_disconnected: ConnectionCallback | None = None,
         time_provider: TimeProvider | None = None,
+        ntp_servers: tuple[str, ...] = DEFAULT_TIME_SYNC_NTP_SERVERS,
     ) -> None:
         self.host = host
         self.port = port
@@ -187,6 +194,7 @@ class GrowCubeClient:
         self.on_connected = on_connected
         self.on_disconnected = on_disconnected
         self.time_provider = time_provider or datetime.now
+        self.ntp_servers = ntp_servers
         self.connected = False
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -207,7 +215,7 @@ class GrowCubeClient:
         self.connected = True
         self._read_task = asyncio.create_task(self._read_loop())
         await _maybe_call(self.on_connected)
-        await self.send(Command(44, time_sync_payload(await self._sync_time_value())))
+        await self.sync_time()
         await self.send(Command(52, ""))
         await self.send(Command(54, ""))
         await self.send(Command(55, "v3"))
@@ -266,6 +274,11 @@ class GrowCubeClient:
     async def start_firmware_update(self) -> None:
         await self.send(b"ele504")
 
+    async def sync_time(self) -> None:
+        value = await self._sync_time_value()
+        await self.send(Command(57, time_config_payload(value, self.ntp_servers)))
+        await self.send(Command(44, time_sync_payload(value)))
+
     def _schedule_time_syncs(self) -> None:
         for delay in TIME_SYNC_DELAYS_SECONDS:
             task = asyncio.create_task(self._sync_time_after_delay(delay))
@@ -276,7 +289,7 @@ class GrowCubeClient:
         await asyncio.sleep(delay)
         if not self.connected or self._writer is None or self._writer.is_closing():
             return
-        await self.send(Command(44, time_sync_payload(await self._sync_time_value())))
+        await self.sync_time()
 
     async def _sync_time_value(self) -> datetime:
         try:
@@ -493,6 +506,9 @@ def log_outgoing_command(host: str, port: int, command: Command | bytes, text: s
         return
     if command.command == 44:
         LOGGER.info("GrowCube TX time-sync host=%s:%s payload=%s raw=%s", host, port, command.payload, text)
+        return
+    if command.command == 57:
+        LOGGER.info("GrowCube TX time-config host=%s:%s payload=%s raw=%s", host, port, command.payload, text)
         return
     if command.command == 55:
         LOGGER.info("GrowCube TX watering-state-request host=%s:%s payload=%r raw=%s", host, port, command.payload, text)
