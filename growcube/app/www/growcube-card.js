@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.90-range-colors";
+const GROWCUBE_CARD_VERSION = "0.2.92-layout-autosave";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
 class GrowcubeCard extends HTMLElement {
@@ -4776,9 +4776,6 @@ class GrowcubeCard extends HTMLElement {
       return this._plantSetupTemplate(data);
     }
     const profile = this._profileMetadata(data.entities);
-    const showNextWatering = data.mode === "Repeating";
-    const nextLabel = "Next watering";
-    const nextValue = data.next;
     const modeLabel = "Mode";
     const modeAction = "edit-mode";
     const modeValue = this._modeDisplay(data.mode);
@@ -4816,12 +4813,6 @@ class GrowcubeCard extends HTMLElement {
               </div>
             </div>
             <div class="stats">
-              ${showNextWatering ? `
-                <div class="stat" data-action="edit-first-watering" role="button" tabindex="0">
-                  <div class="label">${this._escape(nextLabel)}</div>
-                  <div class="value">${this._escape(nextValue)}</div>
-                </div>
-              ` : ""}
               <div class="stat" data-action="${this._escape(modeAction)}" role="button" tabindex="0">
                 <div class="label">${this._escape(modeLabel)}</div>
                 <div class="value">${this._escape(modeValue)}</div>

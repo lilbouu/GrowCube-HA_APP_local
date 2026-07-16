@@ -2198,6 +2198,18 @@ def web_ui_html() -> str:
       margin-bottom: 3px;
     }
     .settings-stat .value { font-weight: 650; overflow-wrap: anywhere; }
+    .settings-stat input {
+      min-width: 0;
+      width: 100%;
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      font-weight: 650;
+      background: transparent;
+    }
+    .settings-stat input:focus { outline: none; }
+    .settings-stat:focus-within { border-color: var(--accent); }
     .warning-box {
       border: 1px solid color-mix(in srgb, var(--warn) 48%, transparent);
       border-radius: 8px;
@@ -2650,14 +2662,11 @@ function renderDeviceSettingsModal() {
             </div>
           </div>
         ` : `
-        <label class="field">
-          <div class="label">Name</div>
-          <div class="row">
-            <input id="deviceNameInput" value="${escapeHtml(currentName)}" maxlength="64" ${busy ? "disabled" : ""}>
-            <button class="secondary" data-save-device-name="${escapeHtml(device.device_id)}" ${busy ? "disabled" : ""}>Save</button>
-          </div>
-        </label>
         <div class="settings-grid">
+          <label class="settings-stat">
+            <div class="label">Name</div>
+            <input id="deviceNameInput" value="${escapeHtml(currentName)}" maxlength="64" ${busy ? "disabled" : ""}>
+          </label>
           <div class="settings-stat">
             <div class="label">Current firmware version</div>
             <div class="value">${escapeHtml(device.version || "Unknown")}</div>
@@ -2732,16 +2741,22 @@ function askUpdateFirmware(deviceId) {
   renderDeviceSettingsModal();
 }
 
-async function saveDeviceName(deviceId) {
+async function saveDeviceName(deviceId, options = {}) {
   const device = findDevice(deviceId);
   if (!device) return;
+  const quiet = Boolean(options.quiet);
   const input = document.getElementById("deviceNameInput");
   const name = String(input?.value || "").trim();
   if (!name) {
     setDeviceSettingsStatus("Name is required.", "error", "");
     return;
   }
-  setDeviceSettingsStatus("Saving device name...", "", "saving");
+  if (name === (device.name || "GrowCube")) {
+    return;
+  }
+  if (!quiet) {
+    setDeviceSettingsStatus("Saving device name...", "", "saving");
+  }
   try {
     const params = new URLSearchParams({device_id: deviceId, name});
     await fetchJson("devices/rename?" + params.toString());
@@ -2849,11 +2864,10 @@ window.addEventListener("popstate", () => {
   updateDashboardCard();
 });
 document.addEventListener("click", async (event) => {
-  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-save-device-name],[data-check-firmware],[data-update-firmware],[data-confirm-update-firmware],[data-reset-network],[data-confirm-reset-network],[data-cancel-device-confirm],[data-close-device-settings]");
+  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-check-firmware],[data-update-firmware],[data-confirm-update-firmware],[data-reset-network],[data-confirm-reset-network],[data-cancel-device-confirm],[data-close-device-settings]");
   const addHost = actionTarget?.dataset?.add;
   const removeId = actionTarget?.dataset?.remove;
   const settingsId = actionTarget?.dataset?.deviceSettings;
-  const saveNameId = actionTarget?.dataset?.saveDeviceName;
   const checkId = actionTarget?.dataset?.checkFirmware;
   const updateId = actionTarget?.dataset?.updateFirmware;
   const confirmUpdateId = actionTarget?.dataset?.confirmUpdateFirmware;
@@ -2869,7 +2883,6 @@ document.addEventListener("click", async (event) => {
   }
   if (addHost) await addDevice(addHost, actionTarget.dataset.name || addHost);
   if (settingsId) openDeviceSettings(settingsId);
-  if (saveNameId) await saveDeviceName(saveNameId);
   if (checkId) await checkFirmware(checkId);
   if (updateId) askUpdateFirmware(updateId);
   if (confirmUpdateId) await updateFirmware(confirmUpdateId);
@@ -2886,12 +2899,19 @@ document.addEventListener("change", (event) => {
   renderDeviceSettingsModal();
 });
 
+document.addEventListener("focusout", async (event) => {
+  if (event.target?.id !== "deviceNameInput" || !deviceSettingsId) {
+    return;
+  }
+  await saveDeviceName(deviceSettingsId, {quiet: true});
+});
+
 document.addEventListener("keydown", async (event) => {
   if (event.key !== "Enter" || event.target?.id !== "deviceNameInput" || !deviceSettingsId) {
     return;
   }
   event.preventDefault();
-  await saveDeviceName(deviceSettingsId);
+  event.target.blur();
 });
 
 refreshDashboard(true).catch((err) => {
