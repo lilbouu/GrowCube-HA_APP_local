@@ -18,6 +18,7 @@ from growcube_protocol import (
 )
 
 GROWCUBE_PORT = 8800
+TIME_SYNC_DELAYS_SECONDS = (15, 60, 180)
 LOGGER = logging.getLogger("growcube-addon.client")
 WATERING_SOURCE_BY_CODE = {
     1: "smart",
@@ -190,6 +191,7 @@ class GrowCubeClient:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._read_task: asyncio.Task | None = None
+        self._time_sync_tasks: set[asyncio.Task] = set()
         self._manual_tasks: set[asyncio.Task] = set()
         self._disconnecting = False
 
@@ -209,11 +211,15 @@ class GrowCubeClient:
         await self.send(Command(52, ""))
         await self.send(Command(54, ""))
         await self.send(Command(55, "v3"))
+        self._schedule_time_syncs()
         return True, ""
 
     async def disconnect(self) -> None:
         self._disconnecting = True
         self.connected = False
+        for task in list(self._time_sync_tasks):
+            task.cancel()
+        self._time_sync_tasks.clear()
         for task in list(self._manual_tasks):
             task.cancel()
         self._manual_tasks.clear()
@@ -259,6 +265,18 @@ class GrowCubeClient:
 
     async def start_firmware_update(self) -> None:
         await self.send(b"ele504")
+
+    def _schedule_time_syncs(self) -> None:
+        for delay in TIME_SYNC_DELAYS_SECONDS:
+            task = asyncio.create_task(self._sync_time_after_delay(delay))
+            self._time_sync_tasks.add(task)
+            task.add_done_callback(self._time_sync_tasks.discard)
+
+    async def _sync_time_after_delay(self, delay: int) -> None:
+        await asyncio.sleep(delay)
+        if not self.connected or self._writer is None or self._writer.is_closing():
+            return
+        await self.send(Command(44, time_sync_payload(await self._sync_time_value())))
 
     async def _sync_time_value(self) -> datetime:
         try:

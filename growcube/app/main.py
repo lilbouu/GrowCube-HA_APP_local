@@ -20,6 +20,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -108,6 +109,14 @@ FIRMWARE_OTA_READY_DELAY_SECONDS = 20
 FIRMWARE_UPLOAD_TIMEOUT_SECONDS = 120
 FIRMWARE_DOWNLOAD_TIMEOUT_SECONDS = 60
 FIRMWARE_MAX_BYTES = 4 * 1024 * 1024
+NETWORK_TIME_URLS = (
+    "https://www.google.com/generate_204",
+    "https://www.cloudflare.com/cdn-cgi/trace",
+    "https://api.github.com/",
+    "http://www.google.com/generate_204",
+    "http://worldtimeapi.org/api/timezone/Etc/UTC",
+)
+NETWORK_TIME_TIMEOUT_SECONDS = 5
 
 
 @dataclass(slots=True)
@@ -335,11 +344,18 @@ class GrowCubeManager:
             raise RuntimeError("manager loop is not running")
         return asyncio.run_coroutine_threadsafe(coro, self.loop)
 
-    def current_time_for_device_sync(self) -> datetime:
+    async def current_time_for_device_sync(self) -> datetime:
         zone = self.device_sync_timezone()
-        value = datetime.now(zone)
+        network_time = await asyncio.to_thread(fetch_network_utc_time)
+        if network_time is not None:
+            value = network_time.astimezone(zone)
+            source = "network"
+        else:
+            value = datetime.now(zone)
+            source = "local-fallback"
         LOGGER.info(
-            "GrowCube time-sync source value=%s ha_time_zone=%s env_TZ=%s system_zone=%s",
+            "GrowCube time-sync source=%s value=%s ha_time_zone=%s env_TZ=%s system_zone=%s",
+            source,
             value.isoformat(timespec="seconds"),
             self.homeassistant_time_zone or "",
             os.environ.get("TZ", ""),
@@ -4062,6 +4078,37 @@ def homeassistant_time_zone() -> str:
         LOGGER.warning("Home Assistant returned unknown time zone: %s", time_zone)
         return ""
     return time_zone
+
+
+def fetch_network_utc_time() -> datetime | None:
+    headers = {
+        "User-Agent": "GrowCubeAddon/0.2",
+        "Accept": "*/*",
+    }
+    for url in NETWORK_TIME_URLS:
+        for method in ("HEAD", "GET"):
+            request = Request(url, headers=headers, method=method)
+            try:
+                with urlopen(request, timeout=NETWORK_TIME_TIMEOUT_SECONDS) as response:
+                    date_header = response.headers.get("Date", "")
+                    if method == "GET":
+                        response.read(1)
+            except HTTPError as err:
+                date_header = err.headers.get("Date", "") if err.headers is not None else ""
+            except (URLError, TimeoutError, OSError) as err:
+                LOGGER.warning("Could not fetch network time from %s with %s: %s", url, method, err)
+                continue
+            try:
+                parsed = parsedate_to_datetime(date_header)
+            except (TypeError, ValueError) as err:
+                LOGGER.warning("Network time response from %s with %s had invalid Date header %r: %s", url, method, date_header, err)
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            value = parsed.astimezone(timezone.utc)
+            LOGGER.info("Fetched network time from %s with %s: %s", url, method, value.isoformat(timespec="seconds"))
+            return value
+    return None
 
 
 def normalize_ingress_url(value: Any) -> str:
