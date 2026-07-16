@@ -344,7 +344,7 @@ class MqttBridge:
             await self._button(unique_id, f"save_schedule_{channel_id}", f"Save watering {channel_name}", base, device_info, f"save_schedule_{channel_id}", "mdi:content-save")
             await self._button(unique_id, f"add_plant_{channel_id}", f"Add plant {channel_name}", base, device_info, f"add_plant_{channel_id}", "mdi:plus-circle-outline")
             await self._button(unique_id, f"reset_plant_{channel_id}", f"Reset plant {channel_name}", base, device_info, f"reset_plant_{channel_id}", "mdi:delete-outline")
-            await self._number(unique_id, f"manual_duration_seconds_{channel_id}", f"Manual watering amount {channel_name}", base, device_info, 30, 150, 10, "mL", "mdi:watering-can", f"{{{{ {channel_base}.config.manual_duration_seconds }}}}")
+            await self._number(unique_id, f"manual_duration_seconds_{channel_id}", f"Manual watering amount {channel_name}", base, device_info, 30, 500, 10, "mL", "mdi:watering-can", f"{{{{ {channel_base}.config.manual_duration_seconds }}}}")
             await self._number(unique_id, f"duration_seconds_{channel_id}", f"Watering amount {channel_name}", base, device_info, 10, 500, 10, "mL", "mdi:timer-outline", f"{{{{ {channel_base}.config.amount_ml }}}}")
             await self._number(unique_id, f"interval_hours_{channel_id}", f"Watering interval {channel_name}", base, device_info, 1, 240, 1, "h", "mdi:calendar-clock", f"{{{{ {channel_base}.config.interval_hours }}}}")
             await self._number(unique_id, f"smart_min_moisture_{channel_id}", f"Minimum moisture {channel_name}", base, device_info, 1, 99, 1, "%", "mdi:water-percent", f"{{{{ {channel_base}.config.smart_min_moisture }}}}")

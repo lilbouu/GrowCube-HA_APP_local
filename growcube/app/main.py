@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -63,6 +63,9 @@ CARD_SOURCE_PATH = APP_DIR / "www" / "growcube-card.js"
 CARD_IMAGE_SOURCE_DIR = APP_DIR / "www" / "images"
 FIRMWARE_DATA_IMAGE_PATH = DATA_DIR / "firmware" / "growcube-local.bin"
 FIRMWARE_BUNDLED_IMAGE_PATH = APP_DIR / "firmware" / "growcube-local.bin"
+FIRMWARE_DOWNLOAD_PATH = DATA_DIR / "firmware" / "GrowCube-Software.bin"
+FIRMWARE_UPDATE_CHECK_URL = "https://www.growcube.cc/software/2.4G/"
+FIRMWARE_LATEST_MESSAGE = "当前已是最新版本！"
 PLANT_PHOTO_DIR = DATA_DIR / "plant_photos"
 CARD_API_URL_PLACEHOLDER = "__GROWCUBE_ADDON_API_URL__"
 DEFAULT_INGRESS_PORT = 8099
@@ -103,6 +106,7 @@ HISTORY_TRAILING_GAP_RETRY_SECONDS = 60 * 60
 HISTORY_TRAILING_GAP_HOURS = 0
 FIRMWARE_OTA_READY_DELAY_SECONDS = 20
 FIRMWARE_UPLOAD_TIMEOUT_SECONDS = 120
+FIRMWARE_DOWNLOAD_TIMEOUT_SECONDS = 60
 FIRMWARE_MAX_BYTES = 4 * 1024 * 1024
 
 
@@ -207,6 +211,7 @@ class DeviceRuntime:
                 on_report=lambda report: self.manager.handle_report(self.state.id, report),
                 on_connected=lambda: self.manager.handle_connected(self.state.id),
                 on_disconnected=lambda: self.manager.handle_disconnected(self.state.id),
+                time_provider=self.manager.current_time_for_device_sync,
             )
             self.client = client
             ok, error = await client.connect()
@@ -262,6 +267,7 @@ class GrowCubeManager:
         self.pending_apply_tasks: dict[tuple[str, int], asyncio.Task] = {}
         self.history_retry_task: asyncio.Task | None = None
         self.notification_signatures: dict[str, tuple[str, ...]] = {}
+        self.homeassistant_time_zone: str | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.mqtt_bridge: MqttBridge | None = None
 
@@ -270,6 +276,11 @@ class GrowCubeManager:
         FIRMWARE_DATA_IMAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
         stored = self._read_json(STATE_PATH, {})
         options = self._read_json(OPTIONS_PATH, {})
+        self.homeassistant_time_zone = homeassistant_time_zone()
+        if self.homeassistant_time_zone:
+            LOGGER.info("Using Home Assistant time zone for GrowCube sync: %s", self.homeassistant_time_zone)
+        else:
+            LOGGER.info("Using add-on local time zone for GrowCube sync: %s", local_timezone())
 
         stored_devices: list[dict[str, Any]] = []
         if isinstance(stored.get("devices"), list):
@@ -323,6 +334,26 @@ class GrowCubeManager:
         if self.loop is None:
             raise RuntimeError("manager loop is not running")
         return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+    def current_time_for_device_sync(self) -> datetime:
+        zone = self.device_sync_timezone()
+        value = datetime.now(zone)
+        LOGGER.info(
+            "GrowCube time-sync source value=%s ha_time_zone=%s env_TZ=%s system_zone=%s",
+            value.isoformat(timespec="seconds"),
+            self.homeassistant_time_zone or "",
+            os.environ.get("TZ", ""),
+            datetime.now().astimezone().tzinfo,
+        )
+        return value
+
+    def device_sync_timezone(self):
+        if self.homeassistant_time_zone:
+            try:
+                return ZoneInfo(self.homeassistant_time_zone)
+            except ZoneInfoNotFoundError:
+                LOGGER.warning("Home Assistant time zone is not available in add-on: %s", self.homeassistant_time_zone)
+        return local_timezone()
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
@@ -411,6 +442,16 @@ class GrowCubeManager:
             "message": "firmware update uploaded",
             "device_id": mqtt_device_unique_id(self._state_to_dict(state)),
             **result,
+        }
+
+    def firmware_check_payload(self, device_id: str) -> dict[str, Any]:
+        state = self.find_device(device_id) if device_id else next(iter(self.devices.values()), None)
+        if state is None:
+            raise KeyError("device not found")
+        return {
+            "ok": True,
+            "device_id": mqtt_device_unique_id(self._state_to_dict(state)),
+            **check_growcube_firmware_update(state.version),
         }
 
     def discover_payload(self, network_value: str) -> dict[str, Any]:
@@ -614,7 +655,7 @@ class GrowCubeManager:
         if runtime is None or runtime.client is None or not runtime.client.connected:
             raise RuntimeError("device is not connected")
         channel = validate_channel(channel)
-        amount_ml = clamp_int(amount_ml, 30, 150, 50)
+        amount_ml = clamp_int(amount_ml, 30, 500, 50)
         duration = watering_duration_seconds(amount_ml)
         runtime.pending_manual_amounts[channel] = amount_ml
         await runtime.client.water(channel, duration)
@@ -648,14 +689,15 @@ class GrowCubeManager:
         runtime = self.runtimes.get(device_id)
         if runtime is None or runtime.client is None or not runtime.client.connected:
             raise RuntimeError("device is not connected")
-        firmware = firmware_image_path()
         async with self.async_lock:
             state.firmware_update_status = "updating"
             state.firmware_update_error = ""
             state.firmware_update_started_at = now_iso()
             self.touch_locked(state)
-        LOGGER.warning("Firmware update requested device=%s firmware=%s bytes=%s", state.host, firmware.name, firmware.stat().st_size)
+        LOGGER.warning("Firmware update requested device=%s current_version=%s", state.host, state.version or "unknown")
         try:
+            firmware = await asyncio.to_thread(download_growcube_firmware_update, state.version)
+            LOGGER.warning("Firmware image downloaded device=%s firmware=%s bytes=%s", state.host, firmware.name, firmware.stat().st_size)
             await runtime.client.start_firmware_update()
             await asyncio.sleep(FIRMWARE_OTA_READY_DELAY_SECONDS)
             upload_result = await asyncio.to_thread(upload_firmware_image, state.host, firmware)
@@ -1177,7 +1219,7 @@ class GrowCubeManager:
                     changed = f"mode={config.mode}"
                     schedule_apply = True
                 elif key.startswith("manual_duration_seconds_"):
-                    config.manual_duration_seconds = clamp_int(payload, 30, 150, config.manual_duration_seconds)
+                    config.manual_duration_seconds = clamp_int(payload, 30, 500, config.manual_duration_seconds)
                     changed = f"manual_amount_ml={config.manual_duration_seconds}"
                 elif key.startswith("duration_seconds_"):
                     config.amount_ml = clamp_int(payload, 10, 500, config.amount_ml)
@@ -1634,7 +1676,7 @@ class GrowCubeManager:
                         air_humidity_min=clamp_int(config.get("air_humidity_min"), 0, 100, 0),
                         air_humidity_max=clamp_int(config.get("air_humidity_max"), 0, 100, 0),
                         mode=str(config.get("mode") or "Disabled"),
-                        manual_duration_seconds=clamp_int(config.get("manual_duration_seconds"), 30, 150, 50),
+                        manual_duration_seconds=clamp_int(config.get("manual_duration_seconds"), 30, 500, 50),
                         duration_seconds=watering_duration_seconds(amount_ml),
                         amount_ml=amount_ml,
                         interval_hours=clamp_int(config.get("interval_hours"), 1, 240, 24),
@@ -2392,7 +2434,6 @@ let deviceSettingsLatestVersion = "";
 let deviceSettingsConfirm = "";
 let deviceSettingsUpdateAcknowledged = false;
 let deviceSettingsRenameValue = "";
-const LOCAL_FIRMWARE_LABEL = "local firmware";
 
 function iconSvg(icon) {
   const common = 'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
@@ -2781,12 +2822,23 @@ async function checkFirmware(deviceId) {
   if (!findDevice(deviceId)) return;
   deviceSettingsUpdateAvailable = false;
   deviceSettingsLatestVersion = "";
-  setDeviceSettingsStatus("Checking firmware version...", "", "checking");
-  await new Promise((resolve) => setTimeout(resolve, 450));
-  if (deviceSettingsId !== deviceId) return;
-  deviceSettingsUpdateAvailable = true;
-  deviceSettingsLatestVersion = LOCAL_FIRMWARE_LABEL;
-  setDeviceSettingsStatus("A firmware update is available.", "ok", "");
+  setDeviceSettingsStatus("Checking GrowCube firmware server...", "", "checking");
+  try {
+    const params = new URLSearchParams({device_id: deviceId});
+    const payload = await fetchJson("devices/firmware/check?" + params.toString());
+    if (deviceSettingsId !== deviceId) return;
+    deviceSettingsUpdateAvailable = Boolean(payload.update_available);
+    deviceSettingsLatestVersion = payload.latest_version || "";
+    if (deviceSettingsUpdateAvailable) {
+      const suffix = deviceSettingsLatestVersion ? ` Version ${deviceSettingsLatestVersion} is available.` : " A firmware update is available.";
+      setDeviceSettingsStatus(suffix.trim(), "ok", "");
+    } else {
+      setDeviceSettingsStatus("Your GrowCube is up to date.", "ok", "");
+    }
+  } catch (err) {
+    if (deviceSettingsId !== deviceId) return;
+    setDeviceSettingsStatus(err.message || "Could not check firmware updates", "error", "");
+  }
 }
 
 async function updateFirmware(deviceId) {
@@ -2799,10 +2851,7 @@ async function updateFirmware(deviceId) {
   }
   deviceSettingsConfirm = "";
   deviceSettingsUpdateAcknowledged = false;
-  setDeviceSettingsStatus("Downloading firmware...", "", "downloading");
-  await new Promise((resolve) => setTimeout(resolve, 700));
-  if (deviceSettingsId !== deviceId) return;
-  setDeviceSettingsStatus("Installing firmware. Do not unplug GrowCube.", "", "updating");
+  setDeviceSettingsStatus("Downloading firmware from GrowCube server...", "", "downloading");
   try {
     const params = new URLSearchParams({device_id: deviceId});
     await fetchJson("devices/firmware/update?" + params.toString());
@@ -3102,6 +3151,8 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
                 self._write_json(manager.rename_device_payload(params))
             elif parsed.path == "/devices/reset_network":
                 self._write_json(manager.reset_network_payload(first_query_value(params, "device_id")))
+            elif parsed.path == "/devices/firmware/check":
+                self._write_json(manager.firmware_check_payload(first_query_value(params, "device_id")))
             elif parsed.path == "/devices/firmware/update":
                 self._write_json(manager.firmware_update_payload(first_query_value(params, "device_id")))
             elif parsed.path == "/entity/command":
@@ -3764,6 +3815,82 @@ def fetch_remote_image(url_value: str) -> tuple[bytes, str]:
         return response.read(), content_type
 
 
+def check_growcube_firmware_update(current_version: str | None) -> dict[str, Any]:
+    version = normalize_firmware_version(current_version)
+    query_url = f"{FIRMWARE_UPDATE_CHECK_URL}?v={quote(version)}"
+    request = Request(query_url, headers={"User-Agent": "GrowCubeAddon/0.2"}, method="GET")
+    LOGGER.info("Checking GrowCube firmware update url=%s current=%s", query_url, version)
+    try:
+        with urlopen(request, timeout=FIRMWARE_DOWNLOAD_TIMEOUT_SECONDS) as response:
+            line = response.readline(2048).decode("utf-8", errors="replace").strip()
+    except HTTPError as err:
+        body_text = err.read(2048).decode("utf-8", errors="replace")
+        raise RuntimeError(f"firmware check failed: HTTP {err.code}: {body_text[:160]}") from err
+    except URLError as err:
+        raise RuntimeError(f"firmware check failed: {err.reason}") from err
+    if not line:
+        raise RuntimeError("firmware check failed: empty server response")
+    if line == FIRMWARE_LATEST_MESSAGE:
+        return {
+            "update_available": False,
+            "current_version": current_version or "",
+            "latest_version": current_version or "",
+            "download_url": "",
+            "message": "latest installed",
+        }
+    download_url = urljoin(FIRMWARE_UPDATE_CHECK_URL, line)
+    parsed = urlparse(download_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.path.lower().endswith(".bin"):
+        raise RuntimeError(f"firmware check failed: unexpected server response: {line[:160]}")
+    latest_version = firmware_version_from_url(download_url) or ""
+    return {
+        "update_available": True,
+        "current_version": current_version or "",
+        "latest_version": latest_version,
+        "download_url": download_url,
+        "message": "update available",
+    }
+
+
+def normalize_firmware_version(version: str | None) -> str:
+    text = str(version or "").strip()
+    return text if text else "0"
+
+
+def firmware_version_from_url(url: str) -> str | None:
+    filename = Path(urlparse(url).path).name
+    match = re.search(r"(?:^|_)V(\d+(?:\.\d+)*)(?:_|\.bin$)", filename, flags=re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def download_growcube_firmware_update(current_version: str | None) -> Path:
+    info = check_growcube_firmware_update(current_version)
+    if not info.get("update_available"):
+        raise RuntimeError("device firmware is already up to date")
+    download_url = str(info.get("download_url") or "")
+    FIRMWARE_DOWNLOAD_PATH.parent.mkdir(parents=True, exist_ok=True)
+    request = Request(download_url, headers={"User-Agent": "GrowCubeAddon/0.2"}, method="GET")
+    LOGGER.info(
+        "Downloading GrowCube firmware url=%s latest=%s",
+        download_url,
+        info.get("latest_version") or "unknown",
+    )
+    try:
+        with urlopen(request, timeout=FIRMWARE_DOWNLOAD_TIMEOUT_SECONDS) as response:
+            body = response.read(FIRMWARE_MAX_BYTES + 1)
+    except HTTPError as err:
+        body_text = err.read(2048).decode("utf-8", errors="replace")
+        raise RuntimeError(f"firmware download failed: HTTP {err.code}: {body_text[:160]}") from err
+    except URLError as err:
+        raise RuntimeError(f"firmware download failed: {err.reason}") from err
+    if len(body) > FIRMWARE_MAX_BYTES:
+        raise RuntimeError(f"firmware image is too large: {len(body)} bytes")
+    if not body:
+        raise RuntimeError("firmware download failed: empty file")
+    FIRMWARE_DOWNLOAD_PATH.write_bytes(body)
+    return validate_firmware_image(FIRMWARE_DOWNLOAD_PATH)
+
+
 def validate_firmware_image(path: Path) -> Path:
     if not path.is_file():
         raise RuntimeError(f"firmware image not found: {path}")
@@ -3906,6 +4033,35 @@ def supervisor_ingress_url() -> str:
         or data.get("ingress_path")
         or ""
     )
+
+
+def homeassistant_time_zone() -> str:
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        return ""
+    request = Request(
+        "http://supervisor/core/api/config",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as err:
+        LOGGER.warning("Could not query Home Assistant config for time zone: %s", err)
+        return ""
+
+    time_zone = str(payload.get("time_zone") or "").strip() if isinstance(payload, dict) else ""
+    if not time_zone:
+        return ""
+    try:
+        ZoneInfo(time_zone)
+    except ZoneInfoNotFoundError:
+        LOGGER.warning("Home Assistant returned unknown time zone: %s", time_zone)
+        return ""
+    return time_zone
 
 
 def normalize_ingress_url(value: Any) -> str:

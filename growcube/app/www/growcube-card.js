@@ -1500,7 +1500,7 @@ class GrowcubeCard extends HTMLElement {
 
   _openWateringDialog() {
     const manualDuration = this._entities().manual_duration;
-    this._wateringSeconds = this._number(manualDuration, 50);
+    this._wateringSeconds = this._clamp(this._number(manualDuration, 50), 30, 500);
     this._wateringOpen = true;
     this._render();
   }
@@ -1686,6 +1686,20 @@ class GrowcubeCard extends HTMLElement {
     return true;
   }
 
+  _validatePlantWizardCurrentStep() {
+    if (
+      this._plantWizardStep === this._plantWizardSettingsStepIndex()
+      && this._normalizeMode(this._plantWizardMode) === "Repeating"
+    ) {
+      const amount = this._validatedActionNumber("plant-wizard-amount", 10, 500, "Watering amount");
+      if (amount === null) {
+        return false;
+      }
+      this._plantWizardAmount = amount;
+    }
+    return true;
+  }
+
   _plantWizardLastStep() {
     if (this._plantWizardCreateCustomOnly) {
       return 2;
@@ -1707,7 +1721,10 @@ class GrowcubeCard extends HTMLElement {
 
   async _confirmWatering() {
     const entities = this._entities();
-    const amountMl = this._clamp(Number(this._entityState(entities.manual_duration, 50)) || 50, 30, 150);
+    const amountMl = this._validatedActionNumber("dialog-seconds", 30, 500, "Manual amount");
+    if (amountMl === null) {
+      return;
+    }
     try {
       if (entities.manual_duration) {
         await this._setNumber(entities.manual_duration, amountMl);
@@ -1788,6 +1805,16 @@ class GrowcubeCard extends HTMLElement {
     }
     const entities = this._entities(channel);
     const mode = this._normalizeMode(this._plantWizardMode || "Disabled");
+    if (mode === "Repeating") {
+      const amount = Number(this._plantWizardAmount);
+      if (!Number.isFinite(amount) || amount < 10 || amount > 500) {
+        this._plantWizardStep = this._plantWizardSettingsStepIndex();
+        this._showError("Watering amount must be between 10 and 500.");
+        this._render();
+        return;
+      }
+      this._plantWizardAmount = Math.round(amount);
+    }
     const profile = this._plantWizardSelected || {};
     const photoUrl = this._plantImageUrl(this._plantWizardPhotoUrl || this._catalogImageUrl(profile));
     const values = {
@@ -5440,7 +5467,7 @@ class GrowcubeCard extends HTMLElement {
           <div class="dialog-title">Manual watering</div>
           <label class="field wide">
             <div class="label">Amount, mL</div>
-            <input type="number" min="30" max="150" step="10" data-action="dialog-seconds" value="${this._wateringSeconds}">
+            <input type="number" min="30" max="500" step="10" data-action="dialog-seconds" value="${this._wateringSeconds}">
           </label>
           <div class="dialog-actions">
             <button type="button" class="secondary" data-action="close-dialog">Cancel</button>
@@ -6091,7 +6118,7 @@ class GrowcubeCard extends HTMLElement {
         body: `
           <label class="field wide">
             <div class="label">Manual amount, mL</div>
-            <input type="number" min="30" max="150" step="10" data-edit-field="manual_amount" value="${this._number(entities.manual_duration, 50)}">
+            <input type="number" min="30" max="500" step="10" data-edit-field="manual_amount" value="${this._number(entities.manual_duration, 50)}">
           </label>
         `,
       },
@@ -6161,6 +6188,36 @@ class GrowcubeCard extends HTMLElement {
     return this.shadowRoot.querySelector(`[data-edit-field="${field}"]`)?.value;
   }
 
+  _validatedNumberField(field, min, max, label) {
+    const input = this.shadowRoot.querySelector(`[data-edit-field="${field}"]`);
+    if (!input) {
+      return null;
+    }
+    const value = Number(input.value);
+    const valid = Number.isFinite(value) && value >= min && value <= max;
+    input.setCustomValidity(valid ? "" : `${label} must be between ${min} and ${max}.`);
+    if (!valid) {
+      input.reportValidity();
+      return null;
+    }
+    return Math.round(value);
+  }
+
+  _validatedActionNumber(action, min, max, label) {
+    const input = this.shadowRoot.querySelector(`[data-action="${action}"]`);
+    if (!input) {
+      return null;
+    }
+    const value = Number(input.value);
+    const valid = Number.isFinite(value) && value >= min && value <= max;
+    input.setCustomValidity(valid ? "" : `${label} must be between ${min} and ${max}.`);
+    if (!valid) {
+      input.reportValidity();
+      return null;
+    }
+    return Math.round(value);
+  }
+
   _currentTimedWateringValues(entities, overrides = {}) {
     const [hour, minute] = this._splitTime(this._firstWateringValue(entities));
     const firstTime = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`;
@@ -6214,7 +6271,7 @@ class GrowcubeCard extends HTMLElement {
       <div class="dialog-backdrop" data-action="close-firmware-update-dialog">
         <div class="dialog edit-dialog" role="dialog" aria-modal="true" aria-label="Update firmware">
           <div class="dialog-title">Update firmware</div>
-          <div class="subtitle">${this._escape(version)}The add-on will upload the bundled firmware image to ${this._escape(deviceName)}. Do not unplug power while the device updates and restarts.</div>
+          <div class="subtitle">${this._escape(version)}The add-on will download the latest firmware from the GrowCube server and upload it to ${this._escape(deviceName)}. Do not unplug power while the device updates and restarts.</div>
           <div class="dialog-actions">
             <button type="button" class="secondary" data-action="close-firmware-update-button">Cancel</button>
             <button type="button" class="danger" data-action="confirm-firmware-update">Update</button>
@@ -6312,12 +6369,21 @@ class GrowcubeCard extends HTMLElement {
 
   async _confirmModeWizard() {
     try {
+      let amount = this._modeWizardAmount;
+      if (this._normalizeMode(this._modeWizardMode) === "Repeating") {
+        amount = this._validatedActionNumber("mode-wizard-amount", 10, 500, "Watering amount");
+        if (amount === null) {
+          return;
+        }
+      } else {
+        amount = this._clamp(Number(amount) || 50, 10, 500);
+      }
       // Apply the full watering configuration through the add-on API once.
       // Sending HA entity updates here as well causes duplicate reset/set commands.
       await this._saveScheduleAfterEdit("Watering settings updated", {
         mode: this._normalizeMode(this._modeWizardMode),
         first_watering_time: this._modeWizardStartTime(),
-        amount_ml: this._modeWizardAmount,
+        amount_ml: amount,
         interval_hours: this._modeWizardIntervalDays * 24,
         smart_min_moisture: this._modeWizardSmartMin,
         smart_max_moisture: this._modeWizardSmartMax,
@@ -6341,8 +6407,12 @@ class GrowcubeCard extends HTMLElement {
         const smartDaytime = this._editValue("daytime") === "on";
         const [firstHour, firstMinute] = this._splitTime(this._editValue("first_time"));
         const firstTime = `${String(firstHour).padStart(2, "0")}:${String(firstMinute).padStart(2, "0")}:00`;
-        const amount = this._clamp(Number(this._editValue("schedule_amount")), 10, 500);
-        const intervalHours = this._clamp(Number(this._editValue("schedule_days")), 1, 10) * 24;
+        const amount = this._validatedNumberField("schedule_amount", 10, 500, "Watering amount");
+        const scheduleDays = this._validatedNumberField("schedule_days", 1, 10, "Interval");
+        if (amount === null || scheduleDays === null) {
+          return;
+        }
+        const intervalHours = scheduleDays * 24;
         // Apply the full watering configuration through the add-on API once.
         // Sending HA entity updates here as well causes duplicate reset/set commands.
         await this._saveScheduleAfterEdit("Watering settings updated", {
@@ -6368,7 +6438,11 @@ class GrowcubeCard extends HTMLElement {
         if (!entities.manual_duration) {
           throw new Error("Manual amount entity is unavailable");
         }
-        await this._setNumber(entities.manual_duration, this._clamp(Number(this._editValue("manual_amount")), 30, 150));
+        const amount = this._validatedNumberField("manual_amount", 30, 500, "Manual amount");
+        if (amount === null) {
+          return;
+        }
+        await this._setNumber(entities.manual_duration, amount);
         this._showToast("Manual amount updated");
       } else if (kind === "smartRange") {
         const min = this._clamp(Number(this._editValue("smart_min")), 1, 98);
@@ -6395,8 +6469,12 @@ class GrowcubeCard extends HTMLElement {
           first_watering_time: firstTime,
         });
       } else if (kind === "schedule") {
-        const amount = this._clamp(Number(this._editValue("schedule_amount")), 10, 500);
-        const intervalHours = this._clamp(Number(this._editValue("schedule_days")), 1, 10) * 24;
+        const amount = this._validatedNumberField("schedule_amount", 10, 500, "Watering amount");
+        const scheduleDays = this._validatedNumberField("schedule_days", 1, 10, "Interval");
+        if (amount === null || scheduleDays === null) {
+          return;
+        }
+        const intervalHours = scheduleDays * 24;
         if (entities.duration) {
           await this._setNumber(entities.duration, amount);
         }
@@ -6563,7 +6641,7 @@ class GrowcubeCard extends HTMLElement {
           this._changePlantWizardResultPage(1);
         } else if (action === "plant-wizard-next") {
           event.stopPropagation();
-          if (this._canAdvancePlantWizard()) {
+          if (this._canAdvancePlantWizard() && this._validatePlantWizardCurrentStep()) {
             this._setPlantWizardStep(this._plantWizardStep + 1);
           }
         } else if (action === "plant-wizard-back") {
@@ -6864,7 +6942,8 @@ class GrowcubeCard extends HTMLElement {
     const wizardAmount = this.shadowRoot.querySelector('[data-action="plant-wizard-amount"]');
     if (wizardAmount) {
       wizardAmount.addEventListener("input", (event) => {
-        this._plantWizardAmount = this._clamp(Number(event.target.value), 10, 500);
+        this._plantWizardAmount = Number(event.target.value);
+        event.target.setCustomValidity("");
       });
       wizardAmount.addEventListener("click", (event) => event.stopPropagation());
     }
@@ -6954,7 +7033,8 @@ class GrowcubeCard extends HTMLElement {
     const modeWizardAmount = this.shadowRoot.querySelector('[data-action="mode-wizard-amount"]');
     if (modeWizardAmount) {
       modeWizardAmount.addEventListener("input", (event) => {
-        this._modeWizardAmount = this._clamp(Number(event.target.value), 10, 500);
+        this._modeWizardAmount = Number(event.target.value);
+        event.target.setCustomValidity("");
       });
       modeWizardAmount.addEventListener("click", (event) => event.stopPropagation());
     }
@@ -7029,6 +7109,16 @@ class GrowcubeCard extends HTMLElement {
         } else if (domain === "text") {
           await this._setText(entityId, target.value);
         }
+      });
+    });
+    this.shadowRoot.querySelectorAll("input[data-edit-field]").forEach((element) => {
+      element.addEventListener("input", () => {
+        element.setCustomValidity("");
+      });
+    });
+    this.shadowRoot.querySelectorAll("input[data-action]").forEach((element) => {
+      element.addEventListener("input", () => {
+        element.setCustomValidity("");
       });
     });
   }
