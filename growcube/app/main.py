@@ -434,6 +434,18 @@ class GrowCubeManager:
         future.result(timeout=10)
         return {"ok": True, "device_id": device_id}
 
+    def rename_device_payload(self, params: dict[str, list[str]]) -> dict[str, Any]:
+        device_id = first_query_value(params, "device_id")
+        name = first_query_value(params, "name").strip()[:64]
+        if not name:
+            raise ValueError("name is required")
+        state = self.find_device(device_id)
+        if state is None:
+            raise KeyError("device not found")
+        future = self.submit(self.rename_device(state.id, name))
+        future.result(timeout=5)
+        return {"ok": True, "device_id": device_id, "name": name}
+
     def entity_command_payload(self, params: dict[str, list[str]]) -> dict[str, Any]:
         entity_id_value = first_query_value(params, "entity_id")
         service = first_query_value(params, "service")
@@ -578,6 +590,14 @@ class GrowCubeManager:
         async with self.async_lock:
             self.devices.pop(device_id, None)
             self.save_locked()
+
+    async def rename_device(self, device_id: str, name: str) -> None:
+        state = self.devices.get(device_id)
+        if state is None:
+            raise KeyError(device_id)
+        async with self.async_lock:
+            state.name = name.strip()[:64] or state.name
+            self.touch_locked(state)
 
     async def connect(self, device_id: str) -> None:
         state = self.devices.get(device_id)
@@ -2331,6 +2351,8 @@ let deviceSettingsMessage = "";
 let deviceSettingsTone = "";
 let deviceSettingsUpdateAvailable = false;
 let deviceSettingsLatestVersion = "";
+let deviceSettingsConfirm = "";
+const LOCAL_FIRMWARE_LABEL = "local firmware";
 
 function iconSvg(icon) {
   const common = 'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
@@ -2553,6 +2575,7 @@ function openDeviceSettings(deviceId) {
   deviceSettingsTone = "";
   deviceSettingsUpdateAvailable = false;
   deviceSettingsLatestVersion = "";
+  deviceSettingsConfirm = "";
   renderDeviceSettingsModal();
   checkFirmware(deviceId);
 }
@@ -2564,6 +2587,7 @@ function closeDeviceSettings() {
   deviceSettingsTone = "";
   deviceSettingsUpdateAvailable = false;
   deviceSettingsLatestVersion = "";
+  deviceSettingsConfirm = "";
   renderDeviceSettingsModal();
 }
 
@@ -2589,6 +2613,8 @@ function renderDeviceSettingsModal() {
   const message = deviceSettingsMessage || (updateError ? updateError : "");
   const messageClass = deviceSettingsTone === "error" || updateError ? "error" : "meta";
   const updateAvailable = deviceSettingsUpdateAvailable && deviceSettingsLatestVersion;
+  const confirmingUpdate = deviceSettingsConfirm === "update_firmware";
+  const confirmingReset = deviceSettingsConfirm === "reset_network";
   modal.classList.remove("hidden");
   modal.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-label="Device settings">
@@ -2602,13 +2628,20 @@ function renderDeviceSettingsModal() {
         </button>
       </div>
       <div class="modal-body">
+        <label class="field">
+          <div class="label">Name</div>
+          <div class="row">
+            <input id="deviceNameInput" value="${escapeHtml(device.name || "GrowCube")}" maxlength="64" ${busy ? "disabled" : ""}>
+            <button class="secondary" data-save-device-name="${escapeHtml(device.device_id)}" ${busy ? "disabled" : ""}>Save</button>
+          </div>
+        </label>
         <div class="settings-grid">
           <div class="settings-stat">
             <div class="label">Connection</div>
             <div class="value"><span class="dot ${status.cls}"></span> ${escapeHtml(status.text)}</div>
           </div>
           <div class="settings-stat">
-            <div class="label">Firmware</div>
+            <div class="label">Current firmware version</div>
             <div class="value">${escapeHtml(device.version || "Unknown")}</div>
           </div>
           ${updateAvailable ? `
@@ -2618,15 +2651,31 @@ function renderDeviceSettingsModal() {
             </div>
           ` : ""}
         </div>
-        ${updateAvailable || updateStatus === "updating" ? `
+        ${updateAvailable || updateStatus === "updating" || confirmingUpdate ? `
           <div class="warning-box">
             Do not power off GrowCube during the update process. Interrupting the update may make the device unavailable.
+            ${confirmingUpdate ? `
+              <div class="modal-actions" style="margin-top:10px">
+                <button class="secondary" data-cancel-device-confirm>Cancel</button>
+                <button class="danger" data-confirm-update-firmware="${escapeHtml(device.device_id)}">Update firmware</button>
+              </div>
+            ` : ""}
           </div>
         ` : ""}
         <div class="modal-actions">
-          ${updateAvailable ? `<button data-update-firmware="${escapeHtml(device.device_id)}" ${busy || !device.connected ? "disabled" : ""}>Update firmware</button>` : ""}
-          <button class="danger" data-reset-network="${escapeHtml(device.device_id)}" ${busy || !device.connected ? "disabled" : ""}>Reset network</button>
+          <button class="secondary" data-check-firmware="${escapeHtml(device.device_id)}" ${busy ? "disabled" : ""}>Check for updates</button>
+          ${updateAvailable ? `<button data-update-firmware="${escapeHtml(device.device_id)}" ${busy || !device.connected || confirmingUpdate ? "disabled" : ""}>Update firmware</button>` : ""}
+          <button class="danger" data-reset-network="${escapeHtml(device.device_id)}" ${busy || !device.connected || confirmingReset ? "disabled" : ""}>Reset network</button>
         </div>
+        ${confirmingReset ? `
+          <div class="warning-box">
+            Reset Wi-Fi settings? GrowCube will restart, leave this network, and must be configured again.
+            <div class="modal-actions" style="margin-top:10px">
+              <button class="secondary" data-cancel-device-confirm>Cancel</button>
+              <button class="danger" data-confirm-reset-network="${escapeHtml(device.device_id)}">Reset network</button>
+            </div>
+          </div>
+        ` : ""}
         <div class="modal-status">
           ${busy ? '<span class="spinner"></span>' : ""}
           <span class="${messageClass}">${escapeHtml(message || (busy ? "Working..." : "Your GrowCube is up to date."))}</span>
@@ -2643,18 +2692,19 @@ async function checkFirmware(deviceId) {
   setDeviceSettingsStatus("Checking firmware version...", "", "checking");
   await new Promise((resolve) => setTimeout(resolve, 450));
   if (deviceSettingsId !== deviceId) return;
-  deviceSettingsUpdateAvailable = false;
-  deviceSettingsLatestVersion = "";
-  setDeviceSettingsStatus("Your GrowCube is up to date.", "ok", "");
+  deviceSettingsUpdateAvailable = true;
+  deviceSettingsLatestVersion = LOCAL_FIRMWARE_LABEL;
+  setDeviceSettingsStatus("A firmware update is available.", "ok", "");
 }
 
 async function updateFirmware(deviceId) {
   const device = findDevice(deviceId);
   if (!device) return;
-  if (!window.confirm("Do not unplug GrowCube or turn off power during firmware update. The device will restart automatically. Continue?")) {
-    return;
-  }
-  setDeviceSettingsStatus("Preparing OTA mode. Do not unplug GrowCube.", "", "updating");
+  deviceSettingsConfirm = "";
+  setDeviceSettingsStatus("Downloading firmware...", "", "downloading");
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  if (deviceSettingsId !== deviceId) return;
+  setDeviceSettingsStatus("Installing firmware. Do not unplug GrowCube.", "", "updating");
   try {
     const params = new URLSearchParams({device_id: deviceId});
     await fetchJson("devices/firmware/update?" + params.toString());
@@ -2665,12 +2715,51 @@ async function updateFirmware(deviceId) {
   }
 }
 
+function askUpdateFirmware(deviceId) {
+  if (!findDevice(deviceId)) return;
+  deviceSettingsConfirm = "update_firmware";
+  deviceSettingsMessage = "";
+  deviceSettingsTone = "";
+  renderDeviceSettingsModal();
+}
+
+async function saveDeviceName(deviceId) {
+  const device = findDevice(deviceId);
+  if (!device) return;
+  const input = document.getElementById("deviceNameInput");
+  const name = String(input?.value || "").trim();
+  if (!name) {
+    setDeviceSettingsStatus("Name is required.", "error", "");
+    return;
+  }
+  setDeviceSettingsStatus("Saving device name...", "", "saving");
+  try {
+    const params = new URLSearchParams({device_id: deviceId, name});
+    await fetchJson("devices/rename?" + params.toString());
+    await refreshDashboard(true);
+    setDeviceSettingsStatus("Device name saved.", "ok", "");
+  } catch (err) {
+    setDeviceSettingsStatus(err.message || "Could not save device name", "error", "");
+  }
+}
+
+function askResetNetwork(deviceId) {
+  if (!findDevice(deviceId)) return;
+  deviceSettingsConfirm = "reset_network";
+  deviceSettingsMessage = "";
+  deviceSettingsTone = "";
+  renderDeviceSettingsModal();
+}
+
+function cancelDeviceConfirm() {
+  deviceSettingsConfirm = "";
+  renderDeviceSettingsModal();
+}
+
 async function resetNetwork(deviceId) {
   const device = findDevice(deviceId);
   if (!device) return;
-  if (!window.confirm("Reset Wi-Fi settings? GrowCube will restart, leave this network, and must be configured again.")) {
-    return;
-  }
+  deviceSettingsConfirm = "";
   setDeviceSettingsStatus("Resetting network settings...", "", "resetting");
   try {
     const params = new URLSearchParams({device_id: deviceId});
@@ -2750,21 +2839,41 @@ window.addEventListener("popstate", () => {
   updateDashboardCard();
 });
 document.addEventListener("click", async (event) => {
-  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-update-firmware],[data-reset-network],[data-close-device-settings]");
+  const actionTarget = event.target?.closest?.("[data-add],[data-remove],[data-device-settings],[data-save-device-name],[data-check-firmware],[data-update-firmware],[data-confirm-update-firmware],[data-reset-network],[data-confirm-reset-network],[data-cancel-device-confirm],[data-close-device-settings]");
   const addHost = actionTarget?.dataset?.add;
   const removeId = actionTarget?.dataset?.remove;
   const settingsId = actionTarget?.dataset?.deviceSettings;
+  const saveNameId = actionTarget?.dataset?.saveDeviceName;
+  const checkId = actionTarget?.dataset?.checkFirmware;
   const updateId = actionTarget?.dataset?.updateFirmware;
+  const confirmUpdateId = actionTarget?.dataset?.confirmUpdateFirmware;
   const resetId = actionTarget?.dataset?.resetNetwork;
+  const confirmResetId = actionTarget?.dataset?.confirmResetNetwork;
   if (actionTarget?.dataset?.closeDeviceSettings !== undefined || event.target?.id === "deviceSettingsModal") {
     closeDeviceSettings();
     return;
   }
+  if (actionTarget?.dataset?.cancelDeviceConfirm !== undefined) {
+    cancelDeviceConfirm();
+    return;
+  }
   if (addHost) await addDevice(addHost, actionTarget.dataset.name || addHost);
   if (settingsId) openDeviceSettings(settingsId);
-  if (updateId) await updateFirmware(updateId);
-  if (resetId) await resetNetwork(resetId);
+  if (saveNameId) await saveDeviceName(saveNameId);
+  if (checkId) await checkFirmware(checkId);
+  if (updateId) askUpdateFirmware(updateId);
+  if (confirmUpdateId) await updateFirmware(confirmUpdateId);
+  if (resetId) askResetNetwork(resetId);
+  if (confirmResetId) await resetNetwork(confirmResetId);
   if (removeId) await removeDevice(removeId);
+});
+
+document.addEventListener("keydown", async (event) => {
+  if (event.key !== "Enter" || event.target?.id !== "deviceNameInput" || !deviceSettingsId) {
+    return;
+  }
+  event.preventDefault();
+  await saveDeviceName(deviceSettingsId);
 });
 
 refreshDashboard(true).catch((err) => {
@@ -2849,6 +2958,8 @@ class GrowCubeApiHandler(BaseHTTPRequestHandler):
                 self._write_json(manager.add_device_payload(params))
             elif parsed.path == "/devices/remove":
                 self._write_json(manager.remove_device_payload(params))
+            elif parsed.path == "/devices/rename":
+                self._write_json(manager.rename_device_payload(params))
             elif parsed.path == "/devices/reset_network":
                 self._write_json(manager.reset_network_payload(first_query_value(params, "device_id")))
             elif parsed.path == "/devices/firmware/update":

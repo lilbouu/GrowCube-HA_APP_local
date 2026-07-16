@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.87-device-settings-actions";
+const GROWCUBE_CARD_VERSION = "0.2.90-range-colors";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
 class GrowcubeCard extends HTMLElement {
@@ -2522,10 +2522,10 @@ class GrowcubeCard extends HTMLElement {
       return "";
     }
     if (Number.isFinite(numericMin) && numericMin !== 0 && numericValue < numericMin) {
-      return " out-of-range";
+      return " below-range";
     }
     if (Number.isFinite(numericMax) && numericMax !== 0 && numericValue > numericMax) {
-      return " out-of-range";
+      return " above-range";
     }
     return "";
   }
@@ -3152,9 +3152,14 @@ class GrowcubeCard extends HTMLElement {
           border: 1px solid color-mix(in srgb, var(--error-color, #db4437) 38%, transparent);
         }
 
-        .value.out-of-range,
-        .chart-current-stat .value.out-of-range {
+        .value.below-range,
+        .chart-current-stat .value.below-range {
           color: var(--error-color, #db4437);
+        }
+
+        .value.above-range,
+        .chart-current-stat .value.above-range {
+          color: var(--info-color, #039be5);
         }
 
         button.state-button {
@@ -4513,7 +4518,6 @@ class GrowcubeCard extends HTMLElement {
       profile.airHumidityMin,
       profile.airHumidityMax,
     );
-    const firmwareVersion = device?.version ? `Version ${device.version}` : "Unknown";
     return `
       <div class="card">
         <div class="header">
@@ -4539,10 +4543,6 @@ class GrowcubeCard extends HTMLElement {
           <div class="stat">
             <div class="label">Days left</div>
             <div class="value">${this._escape(tankDaysLeft)}</div>
-          </div>
-          <div class="stat">
-            <div class="label">Firmware</div>
-            <div class="value">${this._escape(firmwareVersion)}</div>
           </div>
         </div>
       </div>
