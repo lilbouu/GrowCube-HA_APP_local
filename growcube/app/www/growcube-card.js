@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.92-layout-autosave";
+const GROWCUBE_CARD_VERSION = "0.2.93-network-time-sync";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
 class GrowcubeCard extends HTMLElement {

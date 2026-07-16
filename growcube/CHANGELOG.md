@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.93
+
+- Sync GrowCube RTC from external network time on TCP connect so HAOS/VM sleep clock drift does not send stale time to the device.
+
 ## 0.2.85
 
 - Look for the local firmware image in persistent add-on data at `/data/firmware/growcube-local.bin` before falling back to a bundled image.
