@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -875,14 +875,24 @@ class GrowCubeManager:
     async def discover_devices(self, network_value: str) -> list[dict[str, Any]]:
         networks = discovery_networks(network_value)
         semaphore = asyncio.Semaphore(DISCOVERY_CONCURRENCY)
+        time_lock = asyncio.Lock()
+        sync_time: datetime | None = None
         found: dict[str, dict[str, Any]] = {}
+
+        async def discovery_time_provider() -> datetime:
+            nonlocal sync_time
+            if sync_time is None:
+                async with time_lock:
+                    if sync_time is None:
+                        sync_time = await self.current_time_for_device_sync()
+            return sync_time
 
         async def check_host(host: str) -> None:
             async with semaphore:
                 try:
                     if not await tcp_port_open(host, 8800, DISCOVERY_PORT_TIMEOUT_SECONDS):
                         return
-                    device = await probe_growcube_device(host)
+                    device = await probe_growcube_device(host, discovery_time_provider)
                     if device is None:
                         return
                     found[device["device_id"] or host] = device
@@ -3546,7 +3556,7 @@ async def tcp_port_open(host: str, port: int, timeout_seconds: float) -> bool:
     return True
 
 
-async def probe_growcube_device(host: str) -> dict[str, Any] | None:
+async def probe_growcube_device(host: str, time_provider: Callable[[], Any]) -> dict[str, Any] | None:
     loop = asyncio.get_running_loop()
     device_future: asyncio.Future[DeviceVersionReport] = loop.create_future()
 
@@ -3554,7 +3564,7 @@ async def probe_growcube_device(host: str) -> dict[str, Any] | None:
         if isinstance(report, DeviceVersionReport) and not device_future.done():
             device_future.set_result(report)
 
-    client = GrowCubeClient(host, 8800, on_report=on_report)
+    client = GrowCubeClient(host, 8800, on_report=on_report, time_provider=time_provider)
     ok, error = await client.connect()
     if not ok:
         LOGGER.debug("GrowCube discovery probe failed host=%s error=%s", host, error)
