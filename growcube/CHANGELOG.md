@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.95
+
+- Send only the GrowCube timezone offset with `elea57`; firmware now keeps default NTP servers locally.
+
 ## 0.2.94
 
 - Send GrowCube timezone offset and China-friendly NTP servers with the new `elea57` time config command before the legacy RTC sync.

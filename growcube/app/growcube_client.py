@@ -20,11 +20,6 @@ from growcube_protocol import (
 
 GROWCUBE_PORT = 8800
 TIME_SYNC_DELAYS_SECONDS = (15, 60, 180)
-TIME_SYNC_NTP_SERVERS = (
-    "ntp.aliyun.com",
-    "ntp.tencent.com",
-    "pool.ntp.org",
-)
 LOGGER = logging.getLogger("growcube-addon.client")
 WATERING_SOURCE_BY_CODE = {
     1: "smart",
@@ -274,7 +269,7 @@ class GrowCubeClient:
 
     async def sync_time(self) -> None:
         value = await self._sync_time_value()
-        await self.send(Command(57, time_config_payload(value, TIME_SYNC_NTP_SERVERS)))
+        await self.send(Command(57, time_config_payload(value)))
         await self.send(Command(44, time_sync_payload(value)))
 
     def _schedule_time_syncs(self) -> None:

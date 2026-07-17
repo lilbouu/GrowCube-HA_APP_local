@@ -1,4 +1,4 @@
-const GROWCUBE_CARD_VERSION = "0.2.94-firmware-ntp-config";
+const GROWCUBE_CARD_VERSION = "0.2.95-firmware-default-ntp";
 const GROWCUBE_ADDON_API_URL = "__GROWCUBE_ADDON_API_URL__";
 
 class GrowcubeCard extends HTMLElement {
