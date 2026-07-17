@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.96
+
+- Calculate the `elea57` timezone offset directly from the Home Assistant time zone instead of deriving it from the legacy time-sync datetime.
+
 ## 0.2.95
 
 - Send only the GrowCube timezone offset with `elea57`; firmware now keeps default NTP servers locally.

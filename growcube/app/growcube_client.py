@@ -161,6 +161,7 @@ class DelayedTimedWateringStateReport(Report):
 ReportCallback = Callable[[Report], Awaitable[None] | None]
 ConnectionCallback = Callable[[], Awaitable[None] | None]
 TimeProvider = Callable[[], datetime | Awaitable[datetime]]
+TimezoneOffsetProvider = Callable[[], int | Awaitable[int]]
 
 
 class Command:
@@ -181,6 +182,7 @@ class GrowCubeClient:
         on_connected: ConnectionCallback | None = None,
         on_disconnected: ConnectionCallback | None = None,
         time_provider: TimeProvider | None = None,
+        timezone_offset_provider: TimezoneOffsetProvider | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -188,6 +190,7 @@ class GrowCubeClient:
         self.on_connected = on_connected
         self.on_disconnected = on_disconnected
         self.time_provider = time_provider or datetime.now
+        self.timezone_offset_provider = timezone_offset_provider
         self.connected = False
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -269,7 +272,8 @@ class GrowCubeClient:
 
     async def sync_time(self) -> None:
         value = await self._sync_time_value()
-        await self.send(Command(57, time_config_payload(value)))
+        offset_minutes = await self._sync_timezone_offset_minutes(value)
+        await self.send(Command(57, time_config_payload(offset_minutes)))
         await self.send(Command(44, time_sync_payload(value)))
 
     def _schedule_time_syncs(self) -> None:
@@ -294,6 +298,19 @@ class GrowCubeClient:
         except Exception as err:  # pylint: disable=broad-except
             LOGGER.warning("GrowCube time provider failed for %s:%s: %s", self.host, self.port, err)
         return datetime.now().astimezone()
+
+    async def _sync_timezone_offset_minutes(self, fallback_value: datetime) -> int:
+        try:
+            if self.timezone_offset_provider is not None:
+                value = self.timezone_offset_provider()
+                if hasattr(value, "__await__"):
+                    value = await value
+                return int(value)
+        except Exception as err:  # pylint: disable=broad-except
+            LOGGER.warning("GrowCube timezone offset provider failed for %s:%s: %s", self.host, self.port, err)
+
+        offset = fallback_value.utcoffset()
+        return int(offset.total_seconds() // 60) if offset is not None else 0
 
     async def _close_after(self, channel: int, duration: int) -> None:
         await asyncio.sleep(max(1, int(duration)))

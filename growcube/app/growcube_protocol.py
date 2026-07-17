@@ -92,10 +92,8 @@ def time_sync_payload(value: datetime) -> str:
     return value.strftime("%Y@%m@%d@%H@%M@%S")
 
 
-def time_config_payload(value: datetime) -> str:
-    offset = value.utcoffset()
-    offset_minutes = int(offset.total_seconds() // 60) if offset is not None else 0
-    return str(offset_minutes)
+def time_config_payload(offset_minutes: int) -> str:
+    return str(int(offset_minutes))
 
 
 def growcube_local_epoch(value: datetime) -> int:

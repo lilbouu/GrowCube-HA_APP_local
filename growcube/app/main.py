@@ -221,6 +221,7 @@ class DeviceRuntime:
                 on_connected=lambda: self.manager.handle_connected(self.state.id),
                 on_disconnected=lambda: self.manager.handle_disconnected(self.state.id),
                 time_provider=self.manager.current_time_for_device_sync,
+                timezone_offset_provider=self.manager.current_timezone_offset_for_device_sync,
             )
             self.client = client
             ok, error = await client.connect()
@@ -362,6 +363,19 @@ class GrowCubeManager:
             datetime.now().astimezone().tzinfo,
         )
         return value
+
+    async def current_timezone_offset_for_device_sync(self) -> int:
+        zone = self.device_sync_timezone()
+        offset = datetime.now(zone).utcoffset()
+        offset_minutes = int(offset.total_seconds() // 60) if offset is not None else 0
+        LOGGER.info(
+            "GrowCube timezone offset source=%s offset_minutes=%s env_TZ=%s system_zone=%s",
+            self.homeassistant_time_zone or "local",
+            offset_minutes,
+            os.environ.get("TZ", ""),
+            datetime.now().astimezone().tzinfo,
+        )
+        return offset_minutes
 
     def device_sync_timezone(self):
         if self.homeassistant_time_zone:
