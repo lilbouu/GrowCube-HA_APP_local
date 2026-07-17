@@ -300,17 +300,28 @@ class GrowCubeClient:
         return datetime.now().astimezone()
 
     async def _sync_timezone_offset_minutes(self, fallback_value: datetime) -> int:
+        fallback_offset = fallback_value.utcoffset()
+        fallback_offset_minutes = int(fallback_offset.total_seconds() // 60) if fallback_offset is not None else 0
         try:
             if self.timezone_offset_provider is not None:
                 value = self.timezone_offset_provider()
                 if hasattr(value, "__await__"):
                     value = await value
-                return int(value)
+                offset_minutes = int(value)
+                if offset_minutes == 0 and fallback_offset_minutes != 0:
+                    LOGGER.warning(
+                        "GrowCube timezone offset provider returned 0 for %s:%s; "
+                        "using time-sync datetime offset %s instead",
+                        self.host,
+                        self.port,
+                        fallback_offset_minutes,
+                    )
+                    return fallback_offset_minutes
+                return offset_minutes
         except Exception as err:  # pylint: disable=broad-except
             LOGGER.warning("GrowCube timezone offset provider failed for %s:%s: %s", self.host, self.port, err)
 
-        offset = fallback_value.utcoffset()
-        return int(offset.total_seconds() // 60) if offset is not None else 0
+        return fallback_offset_minutes
 
     async def _close_after(self, channel: int, duration: int) -> None:
         await asyncio.sleep(max(1, int(duration)))

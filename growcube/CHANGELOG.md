@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.97
+
+- Fall back to the time-sync datetime offset when the explicit `elea57` timezone provider returns `0` inside Home Assistant.
+
 ## 0.2.96
 
 - Calculate the `elea57` timezone offset directly from the Home Assistant time zone instead of deriving it from the legacy time-sync datetime.
