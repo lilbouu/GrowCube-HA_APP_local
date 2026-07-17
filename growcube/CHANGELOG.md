@@ -3,6 +3,9 @@
 ## 0.2.98
 
 - Stop sending `elea57` timezone configuration; synchronize GrowCube RTC from Home Assistant with `elea44` only.
+- Prefer GrowCube and China-friendly HTTP Date sources before global fallbacks when syncing device RTC.
+- Refresh channel history shortly after pump activity so Recent activity updates automatically for device-recorded watering events.
+- Restore the Manual watering dialog flow so the Water button sends the selected amount again.
 
 ## 0.2.97
 

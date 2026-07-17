@@ -4294,6 +4294,7 @@ class GrowcubeCard extends HTMLElement {
       </ha-card>
 
       ${this._reservoirGuideOpen ? this._reservoirGuideTemplate() : ""}
+      ${this._wateringOpen ? this._wateringDialogTemplate() : ""}
       ${this._reservoirOpen ? this._reservoirDialogTemplate() : ""}
       ${this._editDialog ? this._editDialogTemplate() : ""}
       ${this._plantWizardOpen ? this._plantWizardDialogTemplate() : ""}
@@ -5462,7 +5463,7 @@ class GrowcubeCard extends HTMLElement {
 
   _wateringDialogTemplate() {
     return `
-      <div class="dialog-backdrop" data-action="close-dialog">
+      <div class="dialog-backdrop" data-action="close-watering-dialog">
         <div class="dialog" role="dialog" aria-modal="true" aria-label="Manual watering">
           <div class="dialog-title">Manual watering</div>
           <label class="field wide">
@@ -5470,7 +5471,7 @@ class GrowcubeCard extends HTMLElement {
             <input type="number" min="30" max="500" step="10" data-action="dialog-seconds" value="${this._wateringSeconds}">
           </label>
           <div class="dialog-actions">
-            <button type="button" class="secondary" data-action="close-dialog">Cancel</button>
+            <button type="button" class="secondary" data-action="close-watering-dialog">Cancel</button>
             <button type="button" data-action="confirm-water">Water</button>
           </div>
         </div>
@@ -6680,7 +6681,15 @@ class GrowcubeCard extends HTMLElement {
           this._disableModeWizard();
         } else if (action === "water") {
           event.stopPropagation();
+          this._openWateringDialog();
+        } else if (action === "confirm-water") {
+          event.stopPropagation();
           this._confirmWatering();
+        } else if (action === "close-watering-dialog") {
+          event.stopPropagation();
+          if (event.target === element || element.tagName === "BUTTON") {
+            this._closeWateringDialog();
+          }
         } else if (action === "stop") {
           event.stopPropagation();
           this._press(this._entities().stop)

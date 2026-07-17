@@ -103,6 +103,7 @@ HISTORY_RETRY_CHECK_SECONDS = 15
 HISTORY_LOADING_STALE_SECONDS = 45
 TIMED_HISTORY_REFRESH_GRACE_SECONDS = 5
 TIMED_HISTORY_REFRESH_RETRY_SECONDS = 15
+WATERING_HISTORY_REFRESH_DELAY_SECONDS = 25
 HISTORY_TRAILING_GAP_RETRY_SECONDS = 60 * 60
 HISTORY_TRAILING_GAP_HOURS = 0
 FIRMWARE_OTA_READY_DELAY_SECONDS = 20
@@ -110,9 +111,16 @@ FIRMWARE_UPLOAD_TIMEOUT_SECONDS = 120
 FIRMWARE_DOWNLOAD_TIMEOUT_SECONDS = 60
 FIRMWARE_MAX_BYTES = 4 * 1024 * 1024
 NETWORK_TIME_URLS = (
-    "https://www.google.com/generate_204",
+    # UTC time is read from the HTTP Date header, not from the response body.
+    "https://api.growcube.cc/",
+    "https://www.growcube.cc/",
+    "https://www.baidu.com/",
+    "https://www.qq.com/",
+    "https://www.aliyun.com/",
+    "https://www.tencent.com/",
     "https://www.cloudflare.com/cdn-cgi/trace",
     "https://api.github.com/",
+    "https://www.google.com/generate_204",
     "http://www.google.com/generate_204",
     "http://worldtimeapi.org/api/timezone/Etc/UTC",
 )
@@ -274,6 +282,7 @@ class GrowCubeManager:
         self.devices: dict[str, DeviceState] = {}
         self.runtimes: dict[str, DeviceRuntime] = {}
         self.pending_apply_tasks: dict[tuple[str, int], asyncio.Task] = {}
+        self.pending_history_refresh_tasks: dict[tuple[str, int], asyncio.Task] = {}
         self.history_retry_task: asyncio.Task | None = None
         self.notification_signatures: dict[str, tuple[str, ...]] = {}
         self.homeassistant_time_zone: str | None = None
@@ -644,6 +653,7 @@ class GrowCubeManager:
         if runtime is not None:
             await runtime.disconnect()
         self.cancel_pending_apply(device_id)
+        self.cancel_pending_history_refresh(device_id)
         async with self.async_lock:
             self.devices.pop(device_id, None)
             self.save_locked()
@@ -927,6 +937,49 @@ class GrowCubeManager:
         finally:
             if self.pending_apply_tasks.get(key) is asyncio.current_task():
                 self.pending_apply_tasks.pop(key, None)
+
+    def schedule_history_refresh_after_watering(self, device_id: str, channel: int) -> None:
+        channel = validate_channel(channel)
+        if device_id not in self.devices:
+            return
+        key = (device_id, channel)
+        existing = self.pending_history_refresh_tasks.get(key)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(self._refresh_history_after_watering_delay(device_id, channel))
+        self.pending_history_refresh_tasks[key] = task
+
+    def cancel_pending_history_refresh(self, device_id: str, channel: int | None = None) -> None:
+        keys = [
+            key for key in self.pending_history_refresh_tasks
+            if key[0] == device_id and (channel is None or key[1] == channel)
+        ]
+        for key in keys:
+            task = self.pending_history_refresh_tasks.pop(key)
+            task.cancel()
+
+    async def _refresh_history_after_watering_delay(self, device_id: str, channel: int) -> None:
+        key = (device_id, channel)
+        try:
+            await asyncio.sleep(WATERING_HISTORY_REFRESH_DELAY_SECONDS)
+            state = self.devices.get(device_id)
+            if state is None:
+                return
+            LOGGER.info("Requesting watering history after pump activity device=%s channel=%s", state.host, CHANNEL_NAMES[channel])
+            await self.request_history(device_id, channel)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            state = self.devices.get(device_id)
+            LOGGER.warning(
+                "Delayed watering history refresh failed device=%s channel=%s error=%s",
+                state.host if state is not None else device_id,
+                CHANNEL_NAMES[channel],
+                err,
+            )
+        finally:
+            if self.pending_history_refresh_tasks.get(key) is asyncio.current_task():
+                self.pending_history_refresh_tasks.pop(key, None)
 
     async def history_retry_loop(self) -> None:
         while True:
@@ -1380,6 +1433,7 @@ class GrowCubeManager:
                 channel = state.channels[report.channel]
                 channel.pump_open = report.open
                 if report.open:
+                    self.schedule_history_refresh_after_watering(device_id, report.channel)
                     amount = None
                     runtime = self.runtimes.get(device_id)
                     if runtime is not None:
