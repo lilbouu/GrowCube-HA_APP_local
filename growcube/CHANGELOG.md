@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.98
+
+- Stop sending `elea57` timezone configuration; synchronize GrowCube RTC from Home Assistant with `elea44` only.
+
 ## 0.2.97
 
 - Fall back to the time-sync datetime offset when the explicit `elea57` timezone provider returns `0` inside Home Assistant.

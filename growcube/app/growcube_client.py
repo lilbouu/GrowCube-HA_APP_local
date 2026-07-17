@@ -14,7 +14,6 @@ from growcube_protocol import (
     channel_payload,
     manual_watering_payload,
     parse_messages,
-    time_config_payload,
     time_sync_payload,
 )
 
@@ -161,7 +160,6 @@ class DelayedTimedWateringStateReport(Report):
 ReportCallback = Callable[[Report], Awaitable[None] | None]
 ConnectionCallback = Callable[[], Awaitable[None] | None]
 TimeProvider = Callable[[], datetime | Awaitable[datetime]]
-TimezoneOffsetProvider = Callable[[], int | Awaitable[int]]
 
 
 class Command:
@@ -182,7 +180,6 @@ class GrowCubeClient:
         on_connected: ConnectionCallback | None = None,
         on_disconnected: ConnectionCallback | None = None,
         time_provider: TimeProvider | None = None,
-        timezone_offset_provider: TimezoneOffsetProvider | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -190,7 +187,6 @@ class GrowCubeClient:
         self.on_connected = on_connected
         self.on_disconnected = on_disconnected
         self.time_provider = time_provider or datetime.now
-        self.timezone_offset_provider = timezone_offset_provider
         self.connected = False
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -272,8 +268,6 @@ class GrowCubeClient:
 
     async def sync_time(self) -> None:
         value = await self._sync_time_value()
-        offset_minutes = await self._sync_timezone_offset_minutes(value)
-        await self.send(Command(57, time_config_payload(offset_minutes)))
         await self.send(Command(44, time_sync_payload(value)))
 
     def _schedule_time_syncs(self) -> None:
@@ -298,30 +292,6 @@ class GrowCubeClient:
         except Exception as err:  # pylint: disable=broad-except
             LOGGER.warning("GrowCube time provider failed for %s:%s: %s", self.host, self.port, err)
         return datetime.now().astimezone()
-
-    async def _sync_timezone_offset_minutes(self, fallback_value: datetime) -> int:
-        fallback_offset = fallback_value.utcoffset()
-        fallback_offset_minutes = int(fallback_offset.total_seconds() // 60) if fallback_offset is not None else 0
-        try:
-            if self.timezone_offset_provider is not None:
-                value = self.timezone_offset_provider()
-                if hasattr(value, "__await__"):
-                    value = await value
-                offset_minutes = int(value)
-                if offset_minutes == 0 and fallback_offset_minutes != 0:
-                    LOGGER.warning(
-                        "GrowCube timezone offset provider returned 0 for %s:%s; "
-                        "using time-sync datetime offset %s instead",
-                        self.host,
-                        self.port,
-                        fallback_offset_minutes,
-                    )
-                    return fallback_offset_minutes
-                return offset_minutes
-        except Exception as err:  # pylint: disable=broad-except
-            LOGGER.warning("GrowCube timezone offset provider failed for %s:%s: %s", self.host, self.port, err)
-
-        return fallback_offset_minutes
 
     async def _close_after(self, channel: int, duration: int) -> None:
         await asyncio.sleep(max(1, int(duration)))
@@ -527,9 +497,6 @@ def log_outgoing_command(host: str, port: int, command: Command | bytes, text: s
         return
     if command.command == 44:
         LOGGER.info("GrowCube TX time-sync host=%s:%s payload=%s raw=%s", host, port, command.payload, text)
-        return
-    if command.command == 57:
-        LOGGER.info("GrowCube TX time-config host=%s:%s payload=%s raw=%s", host, port, command.payload, text)
         return
     if command.command == 55:
         LOGGER.info("GrowCube TX watering-state-request host=%s:%s payload=%r raw=%s", host, port, command.payload, text)
